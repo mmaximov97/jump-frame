@@ -1,8 +1,8 @@
-# JumpPhysics Lite
+# FrameJump
 
 **Measure your vertical jump height using nothing but your phone's camera.**
 
-JumpPhysics Lite is a client-side web app that calculates vertical jump height through frame-by-frame video analysis. No uploads, no expensive hardware — just physics and your browser.
+FrameJump is a client-side web app that calculates vertical jump height through frame-by-frame video analysis. No uploads, no expensive hardware — just physics and your browser.
 
 ---
 
@@ -52,7 +52,7 @@ Higher FPS means more precise results. Here's what to expect:
 
 - **Zero-Upload Privacy** — Videos are processed locally via `URL.createObjectURL()`. Nothing leaves your device.
 - **Frame-Accurate Navigation** — Step forward or backward one frame at a time.
-- **Manual FPS Calibration** — Supports 30, 60, 120, and 240 FPS recordings.
+- **Auto FPS Detection** — Automatically detects video frame rate via `requestVideoFrameCallback`, with 60 FPS default fallback.
 - **Mobile-First Design** — Large touch targets built for the court or the gym.
 - **Metric & Imperial** — Toggle between centimeters and inches.
 
@@ -77,19 +77,11 @@ Higher FPS means more precise results. Here's what to expect:
 
 ---
 
-## Roadmap
+## Development
 
-### Phase 1 — Core Video Engine
-- [ ] Set up Vite + Vue 3 project
-- [ ] Implement `VideoPlayer.vue` using the native `<video>` tag
-- [ ] Create a `useFrameStepping` composable for `currentTime` manipulation
-
-### Phase 2 — Analysis Tools
-- [ ] Build the marker system to save takeoff and landing times
-- [ ] Add an FPS selector
-- [ ] Implement the reactive calculation engine
-
-### Phase 3 — UI & UX Polish
-- [ ] Apply dark performance theme
-- [ ] Add a results card component for sharing
-- [ ] Responsive optimization for iOS/Android browsers
+```bash
+npm install          # install dependencies
+npm run dev          # start dev server
+npm run build        # type-check + production build
+npm run preview      # preview production build
+```

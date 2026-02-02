@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-JumpPhysics Lite — a client-side web app that measures vertical jump height from video. Users upload a video, mark takeoff and landing frames, and get jump height calculated via flight-time kinematics: `h = g * t² / 8`.
+FrameJump — a client-side web app that measures vertical jump height from video. Users upload a video, mark takeoff and landing frames, and get jump height calculated via flight-time kinematics: `h = g * t² / 8`.
 
 All video processing happens in the browser. No server uploads.
 
