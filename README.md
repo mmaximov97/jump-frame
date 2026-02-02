@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/logo.svg" alt="FrameJump" width="120" />
+</p>
+
 # FrameJump
 
 **Measure your vertical jump height using nothing but your phone's camera.**
