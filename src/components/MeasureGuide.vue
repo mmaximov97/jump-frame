@@ -96,8 +96,8 @@ function toggleFaq(i: number) {
               </span>
             </div>
             <p class="text-xs text-slate-400 p-3">
-              A flat, relaxed stance like this isn't the reference moment — the foot
-              is fully planted, not right at the edge of contact.
+              Toes are still flat on the ground here — that's still clear ground
+              contact, not the edge-of-contact moment you're looking for.
             </p>
           </div>
         </div>
@@ -160,26 +160,26 @@ function toggleFaq(i: number) {
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
           <div class="rounded-xl border border-surface-lighter bg-surface-light p-3">
             <Video class="w-4 h-4 text-brand-light mb-2" />
-            <p class="text-xs text-slate-300 leading-relaxed">
+            <p class="text-sm text-slate-300 leading-relaxed">
               Feet and floor clearly visible. Side angle shows the gap best,
               front-on works if contact is visible.
             </p>
           </div>
           <div class="rounded-xl border border-surface-lighter bg-surface-light p-3">
             <MoveVertical class="w-4 h-4 text-brand-light mb-2" />
-            <p class="text-xs text-slate-300 leading-relaxed">
+            <p class="text-sm text-slate-300 leading-relaxed">
               Camera at knee-to-waist height — not shooting down from above.
             </p>
           </div>
           <div class="rounded-xl border border-surface-lighter bg-surface-light p-3">
             <Smartphone class="w-4 h-4 text-brand-light mb-2" />
-            <p class="text-xs text-slate-300 leading-relaxed">
+            <p class="text-sm text-slate-300 leading-relaxed">
               Phone still, whole person in frame.
             </p>
           </div>
         </div>
-        <div class="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-          <p class="flex items-center gap-2 text-sm font-medium text-amber-200 mb-2">
+        <div class="rounded-xl border border-green-500/30 bg-green-500/5 p-4">
+          <p class="flex items-center gap-2 text-sm font-medium text-green-300 mb-2">
             <span class="text-base">💡</span>
             Use 60 FPS if your phone supports it
           </p>
