@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { X, Trophy } from 'lucide-vue-next'
+import { Trophy } from 'lucide-vue-next'
 
 defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -14,7 +14,6 @@ defineProps<{
 
 const emit = defineEmits<{
   'toggle-unit': []
-  'close': []
 }>()
 
 function formatHeight(value: number | null): string {
@@ -39,14 +38,6 @@ function formatDelta(value: number): string {
 
 <template>
   <div class="relative bg-surface-light rounded-xl p-3 md:p-5 border border-surface-lighter">
-    <button
-      class="absolute top-2 right-2 p-1 rounded text-slate-500 hover:text-slate-300
-             hover:bg-surface-lighter transition-colors"
-      title="Hide results"
-      @click="emit('close')"
-    >
-      <X class="w-3.5 h-3.5" />
-    </button>
     <div
       v-if="newRecordDelta"
       class="flex items-center justify-center gap-1.5 mb-2 py-1.5 rounded-lg

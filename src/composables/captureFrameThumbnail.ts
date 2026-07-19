@@ -1,4 +1,8 @@
-const THUMB_WIDTH = 160
+// Displayed at up to 224px wide in the expanded history row — captured a
+// bit above that so it isn't visibly upscaled, without ballooning
+// localStorage usage per entry.
+const THUMB_WIDTH = 260
+const THUMB_QUALITY = 0.7
 const SEEK_TIMEOUT_MS = 1000
 
 // Grabs a downscaled JPEG snapshot of the video at `targetTime`, then
@@ -36,7 +40,7 @@ export function captureFrameThumbnail(
         const ctx = canvas.getContext('2d')
         if (!ctx) return null
         ctx.drawImage(video, 0, 0, width, height)
-        return canvas.toDataURL('image/jpeg', 0.6)
+        return canvas.toDataURL('image/jpeg', THUMB_QUALITY)
       } catch {
         return null
       }

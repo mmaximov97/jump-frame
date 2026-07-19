@@ -65,13 +65,6 @@ const hasAnyMarker = computed(
   () => takeoffTime.value !== null || landingTime.value !== null
 )
 
-const resultsHidden = ref(false)
-const showResults = computed(() => hasValidMarkers.value && !resultsHidden.value)
-
-watch(hasValidMarkers, (valid) => {
-  if (valid) resultsHidden.value = false
-})
-
 const history = useJumpHistory()
 
 // Mirrors the "is this jump implausibly slow-motion" threshold ResultsCard
@@ -153,13 +146,12 @@ function setVideoRef(el: HTMLVideoElement | null) {
         </button>
       </p>
 
-      <div v-if="history.entries.value.length > 0" class="mt-10 pt-8 border-t border-surface-lighter">
+      <div v-if="history.entries.value.length > 0" class="mt-12 pt-6 border-t border-surface-lighter">
         <HistoryList
           :entries="history.entries.value"
           :personal-record="history.personalRecord.value"
           :unit="unit"
           @delete-entry="history.deleteEntry"
-          @clear-all="history.clearAll"
         />
       </div>
     </div>
@@ -205,7 +197,7 @@ function setVideoRef(el: HTMLVideoElement | null) {
 
         <Transition name="results">
           <ResultsCard
-            v-if="showResults"
+            v-if="hasValidMarkers"
             :display-height="displayHeight"
             :display-error="displayError"
             :flight-time="flightTimeSeconds"
@@ -215,18 +207,8 @@ function setVideoRef(el: HTMLVideoElement | null) {
             :unit="unit"
             :new-record-delta="newRecordDelta"
             @toggle-unit="toggleUnit"
-            @close="resultsHidden = true"
           />
         </Transition>
-
-        <button
-          v-if="hasValidMarkers && resultsHidden"
-          class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-400
-                 bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
-          @click="resultsHidden = false"
-        >
-          Show result
-        </button>
       </div>
     </div>
   </div>

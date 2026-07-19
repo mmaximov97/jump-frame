@@ -107,11 +107,6 @@ export function useJumpHistory() {
     persist()
   }
 
-  function clearAll() {
-    entries.value = []
-    persist()
-  }
-
   return {
     entries: sortedEntries,
     personalRecord,
@@ -119,6 +114,5 @@ export function useJumpHistory() {
     upsertDraft,
     finalizeDraft,
     deleteEntry,
-    clearAll,
   }
 }
