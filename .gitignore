@@ -25,3 +25,6 @@ dist-ssr
 
 # Playwright
 .playwright-mcp/
+
+# Local working files (plans working copies etc.)
+tmp/
