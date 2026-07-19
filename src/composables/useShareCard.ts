@@ -132,12 +132,17 @@ export function useShareCard() {
     gapAfter: number
   }
 
-  // Draws a stack of baselines centered as one group in the card, instead of
-  // pinning content to the top with dead space below — the line count (and
-  // therefore the block's total height) varies with how the fact text wraps.
-  function drawCenteredStack(ctx: CanvasRenderingContext2D, cx: number, lines: StatsLine[]) {
+  // Draws a stack of baselines centered as one group within the given height
+  // (defaults to the full card), instead of pinning content to the top with
+  // dead space below — the line count varies with how the fact text wraps.
+  function drawCenteredStack(
+    ctx: CanvasRenderingContext2D,
+    cx: number,
+    lines: StatsLine[],
+    availableHeight: number = CARD_HEIGHT
+  ) {
     const totalHeight = lines.reduce((sum, l) => sum + l.size + l.gapAfter, 0)
-    let cursor = (CARD_HEIGHT - totalHeight) / 2
+    let cursor = (availableHeight - totalHeight) / 2
     for (const line of lines) {
       cursor += line.size
       ctx.font = line.font
@@ -188,7 +193,11 @@ export function useShareCard() {
       ctx.font = factFont
       const factLines = wrapText(ctx, fact.text, 880)
 
-      const lines: StatsLine[] = [
+      // Date + logo are pinned near the bottom, like a signature — everything
+      // else centers as one group in the space above that footer.
+      const FOOTER_HEIGHT = 220
+
+      const mainLines: StatsLine[] = [
         { text: fact.emoji, font: '160px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 160, gapAfter: 30 },
         { text: heightLabel, font: '700 210px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 210, gapAfter: 20 },
         { text: `⏱ ${flightLabel}`, font: '700 78px system-ui, sans-serif', color: BRAND_LIGHT, size: 78, gapAfter: 40 },
@@ -197,13 +206,19 @@ export function useShareCard() {
           font: factFont,
           color: TEXT_MUTED,
           size: 46,
-          gapAfter: i === factLines.length - 1 ? 70 : 14,
+          gapAfter: i === factLines.length - 1 ? 50 : 14,
         })),
-        { text: dateLabel, font: '500 38px system-ui, sans-serif', color: TEXT_MUTED, size: 38, gapAfter: 20 },
-        { text: 'FrameJump', font: '700 44px system-ui, sans-serif', color: TEXT_MUTED, size: 44, gapAfter: 0 },
+        { text: 'Think you can beat this jump?', font: '700 44px system-ui, sans-serif', color: TEXT_LIGHT, size: 44, gapAfter: 0 },
       ]
 
-      drawCenteredStack(ctx, cx, lines)
+      drawCenteredStack(ctx, cx, mainLines, CARD_HEIGHT - FOOTER_HEIGHT)
+
+      ctx.font = '500 38px system-ui, sans-serif'
+      ctx.fillStyle = TEXT_MUTED
+      ctx.fillText(dateLabel, cx, CARD_HEIGHT - 160)
+
+      ctx.font = '700 44px system-ui, sans-serif'
+      ctx.fillText('FrameJump', cx, CARD_HEIGHT - 90)
       return
     }
 
