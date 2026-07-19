@@ -4,19 +4,19 @@ import { ArrowUpFromLine, ArrowDownToLine, Check } from 'lucide-vue-next'
 defineProps<{
   takeoffSet: boolean
   landingSet: boolean
+  hasAnyMarker: boolean
 }>()
 
 const emit = defineEmits<{
   'set-takeoff': []
   'set-landing': []
-  'goto-takeoff': []
-  'goto-landing': []
+  'clear-markers': []
 }>()
 </script>
 
 <template>
-  <div class="grid grid-cols-2 gap-2">
-    <div class="flex flex-col gap-1">
+  <div class="flex flex-col gap-2">
+    <div class="grid grid-cols-2 gap-2">
       <button
         class="min-h-14 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border"
         :class="
@@ -30,16 +30,7 @@ const emit = defineEmits<{
         <span>Takeoff</span>
         <Check v-if="takeoffSet" class="w-4 h-4 shrink-0" />
       </button>
-      <button
-        v-if="takeoffSet"
-        class="min-h-11 flex items-center justify-center text-xs text-slate-400 hover:text-slate-200 transition-colors"
-        @click="emit('goto-takeoff')"
-      >
-        Go to frame
-      </button>
-    </div>
 
-    <div class="flex flex-col gap-1">
       <button
         class="min-h-14 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border"
         :class="
@@ -53,13 +44,15 @@ const emit = defineEmits<{
         <span>Landing</span>
         <Check v-if="landingSet" class="w-4 h-4 shrink-0" />
       </button>
-      <button
-        v-if="landingSet"
-        class="min-h-11 flex items-center justify-center text-xs text-slate-400 hover:text-slate-200 transition-colors"
-        @click="emit('goto-landing')"
-      >
-        Go to frame
-      </button>
     </div>
+
+    <button
+      v-if="hasAnyMarker"
+      class="min-h-11 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200
+             bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
+      @click="emit('clear-markers')"
+    >
+      Clear
+    </button>
   </div>
 </template>

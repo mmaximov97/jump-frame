@@ -26,7 +26,6 @@ const {
   loadVideo,
   pause,
   togglePlayPause,
-  seekTo,
 } = useVideoPlayer()
 
 useFpsDetection(videoRef, isVideoLoaded, fps)
@@ -58,6 +57,10 @@ const {
   toggleUnit,
 } = useJumpCalculation(takeoffTime, landingTime, fps)
 
+const hasAnyMarker = computed(
+  () => takeoffTime.value !== null || landingTime.value !== null
+)
+
 const resultsHidden = ref(false)
 const showResults = computed(() => hasValidMarkers.value && !resultsHidden.value)
 
@@ -72,18 +75,6 @@ function onFileSelected(file: File) {
 
 function setVideoRef(el: HTMLVideoElement | null) {
   videoRef.value = el
-}
-
-function gotoTakeoff() {
-  if (takeoffTime.value === null) return
-  pause()
-  seekTo(takeoffTime.value)
-}
-
-function gotoLanding() {
-  if (landingTime.value === null) return
-  pause()
-  seekTo(landingTime.value)
 }
 </script>
 
@@ -142,10 +133,10 @@ function gotoLanding() {
         <MarkerControls
           :takeoff-set="takeoffTime !== null"
           :landing-set="landingTime !== null"
+          :has-any-marker="hasAnyMarker"
           @set-takeoff="setTakeoff(currentTime)"
           @set-landing="setLanding(currentTime)"
-          @goto-takeoff="gotoTakeoff"
-          @goto-landing="gotoLanding"
+          @clear-markers="clearMarkers"
         />
 
         <Transition name="results">
