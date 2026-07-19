@@ -57,8 +57,8 @@ export function useJumpCalculation(
     return { value: errorMarginInches.value, unit: 'in' }
   })
 
-  function toggleUnit() {
-    unit.value = unit.value === 'metric' ? 'imperial' : 'metric'
+  function setUnit(target: 'metric' | 'imperial') {
+    unit.value = target
   }
 
   const displayHeight = computed(() => {
@@ -82,7 +82,7 @@ export function useJumpCalculation(
     jumpHeightMeters,
     jumpHeightCm,
     jumpHeightInches,
-    toggleUnit,
+    setUnit,
     displayHeight,
     displayError,
   }
