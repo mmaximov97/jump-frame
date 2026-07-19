@@ -10,6 +10,8 @@
   --color-surface: #1e1e2e;
   --color-surface-light: #2a2a3e;
   --color-surface-lighter: #363650;
+  --color-record: #facc15;
+  --color-record-light: #fde047;
 }
 
 body {

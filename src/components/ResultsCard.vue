@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Share2 } from 'lucide-vue-next'
+import { Share2, Trophy } from 'lucide-vue-next'
 
 const props = defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -11,6 +11,7 @@ const props = defineProps<{
   fps: number
   unit: 'metric' | 'imperial'
   jumpHeightCm: number | null
+  newRecordDelta: { value: number; unit: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +32,10 @@ function formatFlightTime(t: number | null): string {
 function formatError(value: number | null): string {
   if (value === null) return ''
   return '± ' + value.toFixed(1)
+}
+
+function formatDelta(value: number): string {
+  return '+' + value.toFixed(1)
 }
 
 // Flight time above this is physically implausible for a normal jump —
@@ -56,6 +61,15 @@ const factText = computed(() => {
 
 <template>
   <div class="relative bg-surface-light rounded-xl p-3 md:p-5 border border-surface-lighter">
+    <div
+      v-if="newRecordDelta"
+      class="flex items-center justify-center gap-1.5 mb-2 py-1.5 rounded-lg
+             bg-record/15 border border-record/40 text-record-light text-xs md:text-sm font-medium"
+    >
+      <Trophy class="w-4 h-4 shrink-0" />
+      <span>New record! {{ formatDelta(newRecordDelta.value) }} {{ newRecordDelta.unit }} to your previous best</span>
+    </div>
+
     <!-- 1. Result — the hero metric -->
     <div class="flex items-baseline justify-center gap-2 mb-1">
       <p class="text-3xl md:text-5xl font-bold tracking-tight">
