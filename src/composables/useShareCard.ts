@@ -106,24 +106,6 @@ export function useShareCard() {
     return STATS_FACTS.find((t) => jumpHeightCm >= t.min && jumpHeightCm < t.max) ?? DEFAULT_FACT
   }
 
-  // ctx.font must already be set to the font these lines will render in.
-  function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
-    const words = text.split(' ')
-    const lines: string[] = []
-    let line = ''
-    for (const word of words) {
-      const candidate = line ? `${line} ${word}` : word
-      if (line && ctx.measureText(candidate).width > maxWidth) {
-        lines.push(line)
-        line = word
-      } else {
-        line = candidate
-      }
-    }
-    if (line) lines.push(line)
-    return lines
-  }
-
   interface StatsLine {
     text: string
     font: string
@@ -189,25 +171,14 @@ export function useShareCard() {
       const fact = getStatsFact(jumpHeightCm)
       const cx = CARD_WIDTH / 2
 
-      const factFont = '500 46px system-ui, sans-serif'
-      ctx.font = factFont
-      const factLines = wrapText(ctx, fact.text, 880)
-
       // Date + logo are pinned near the bottom, like a signature — everything
       // else centers as one group in the space above that footer.
       const FOOTER_HEIGHT = 220
 
       const mainLines: StatsLine[] = [
-        { text: fact.emoji, font: '160px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 160, gapAfter: 30 },
-        { text: heightLabel, font: '700 210px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 210, gapAfter: 20 },
-        { text: `⏱ ${flightLabel}`, font: '700 78px system-ui, sans-serif', color: BRAND_LIGHT, size: 78, gapAfter: 40 },
-        ...factLines.map((text, i) => ({
-          text,
-          font: factFont,
-          color: TEXT_MUTED,
-          size: 46,
-          gapAfter: i === factLines.length - 1 ? 50 : 14,
-        })),
+        { text: fact.emoji, font: '160px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 160, gapAfter: 56 },
+        { text: heightLabel, font: '700 210px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 210, gapAfter: 40 },
+        { text: `⏱ ${flightLabel}`, font: '700 78px system-ui, sans-serif', color: BRAND_LIGHT, size: 78, gapAfter: 76 },
         { text: 'Think you can beat this jump?', font: '700 44px system-ui, sans-serif', color: TEXT_LIGHT, size: 44, gapAfter: 0 },
       ]
 
