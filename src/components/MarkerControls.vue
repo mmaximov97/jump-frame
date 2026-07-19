@@ -1,42 +1,65 @@
 <script setup lang="ts">
+import { ArrowUpFromLine, ArrowDownToLine, Check } from 'lucide-vue-next'
+
 defineProps<{
-  takeoffFrame: number | null
-  landingFrame: number | null
-  hasAnyMarker: boolean
+  takeoffSet: boolean
+  landingSet: boolean
 }>()
 
 const emit = defineEmits<{
   'set-takeoff': []
   'set-landing': []
-  'clear-markers': []
+  'goto-takeoff': []
+  'goto-landing': []
 }>()
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-1.5">
-    <button
-      class="px-2.5 py-1.5 rounded-lg font-medium transition-colors text-xs
-             bg-takeoff/15 text-takeoff-light border border-takeoff/30 hover:bg-takeoff/25"
-      @click="emit('set-takeoff')"
-    >
-      Takeoff
-      <span v-if="takeoffFrame !== null" class="ml-1 opacity-75">#{{ takeoffFrame }}</span>
-    </button>
-    <button
-      class="px-2.5 py-1.5 rounded-lg font-medium transition-colors text-xs
-             bg-landing/15 text-landing-light border border-landing/30 hover:bg-landing/25"
-      @click="emit('set-landing')"
-    >
-      Landing
-      <span v-if="landingFrame !== null" class="ml-1 opacity-75">#{{ landingFrame }}</span>
-    </button>
-    <button
-      v-if="hasAnyMarker"
-      class="px-2 py-1.5 rounded-lg text-xs text-slate-400 hover:text-slate-200
-             bg-surface-light hover:bg-surface-lighter transition-colors"
-      @click="emit('clear-markers')"
-    >
-      Clear
-    </button>
+  <div class="grid grid-cols-2 gap-2">
+    <div class="flex flex-col gap-1">
+      <button
+        class="min-h-14 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border"
+        :class="
+          takeoffSet
+            ? 'bg-takeoff/25 text-takeoff-light border-takeoff/50'
+            : 'bg-takeoff/10 text-takeoff-light border-takeoff/30 hover:bg-takeoff/20'
+        "
+        @click="emit('set-takeoff')"
+      >
+        <ArrowUpFromLine class="w-5 h-5 shrink-0" />
+        <span>Takeoff</span>
+        <Check v-if="takeoffSet" class="w-4 h-4 shrink-0" />
+      </button>
+      <button
+        v-if="takeoffSet"
+        class="min-h-11 flex items-center justify-center text-xs text-slate-400 hover:text-slate-200 transition-colors"
+        @click="emit('goto-takeoff')"
+      >
+        Go to frame
+      </button>
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <button
+        class="min-h-14 rounded-lg font-medium transition-colors flex items-center justify-center gap-2 border"
+        :class="
+          landingSet
+            ? 'bg-landing/25 text-landing-light border-landing/50'
+            : 'bg-landing/10 text-landing-light border-landing/30 hover:bg-landing/20'
+        "
+        @click="emit('set-landing')"
+      >
+        <ArrowDownToLine class="w-5 h-5 shrink-0" />
+        <span>Landing</span>
+        <Check v-if="landingSet" class="w-4 h-4 shrink-0" />
+      </button>
+      <button
+        v-if="landingSet"
+        class="min-h-11 flex items-center justify-center text-xs text-slate-400 hover:text-slate-200 transition-colors"
+        @click="emit('goto-landing')"
+      >
+        Go to frame
+      </button>
+    </div>
   </div>
 </template>

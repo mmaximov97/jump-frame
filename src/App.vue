@@ -8,7 +8,6 @@ import { useJumpCalculation } from './composables/useJumpCalculation'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
 import FrameControls from './components/FrameControls.vue'
-import FpsSelector from './components/FpsSelector.vue'
 import MarkerControls from './components/MarkerControls.vue'
 import ResultsCard from './components/ResultsCard.vue'
 import TheoryPage from './components/TheoryPage.vue'
@@ -27,9 +26,10 @@ const {
   loadVideo,
   pause,
   togglePlayPause,
+  seekTo,
 } = useVideoPlayer()
 
-const { detectedFps, isDetecting } = useFpsDetection(videoRef, isVideoLoaded, fps)
+useFpsDetection(videoRef, isVideoLoaded, fps)
 
 const { currentFrame, stepForward, stepBackward } = useFrameStepping(
   videoRef,
@@ -58,10 +58,6 @@ const {
   toggleUnit,
 } = useJumpCalculation(takeoffTime, landingTime, fps)
 
-const hasAnyMarker = computed(
-  () => takeoffTime.value !== null || landingTime.value !== null
-)
-
 const resultsHidden = ref(false)
 const showResults = computed(() => hasValidMarkers.value && !resultsHidden.value)
 
@@ -76,6 +72,18 @@ function onFileSelected(file: File) {
 
 function setVideoRef(el: HTMLVideoElement | null) {
   videoRef.value = el
+}
+
+function gotoTakeoff() {
+  if (takeoffTime.value === null) return
+  pause()
+  seekTo(takeoffTime.value)
+}
+
+function gotoLanding() {
+  if (landingTime.value === null) return
+  pause()
+  seekTo(landingTime.value)
 }
 </script>
 
@@ -131,21 +139,14 @@ function setVideoRef(el: HTMLVideoElement | null) {
 
       <!-- Side panel -->
       <div v-if="isVideoLoaded" class="shrink-0 md:w-72 flex flex-col gap-3">
-        <div class="flex items-center justify-between gap-3">
-          <FpsSelector
-            :fps="fps"
-            :detected-fps="detectedFps"
-            :is-detecting="isDetecting"
-          />
-          <MarkerControls
-            :takeoff-frame="takeoffFrame"
-            :landing-frame="landingFrame"
-            :has-any-marker="hasAnyMarker"
-            @set-takeoff="setTakeoff(currentTime)"
-            @set-landing="setLanding(currentTime)"
-            @clear-markers="clearMarkers"
-          />
-        </div>
+        <MarkerControls
+          :takeoff-set="takeoffTime !== null"
+          :landing-set="landingTime !== null"
+          @set-takeoff="setTakeoff(currentTime)"
+          @set-landing="setLanding(currentTime)"
+          @goto-takeoff="gotoTakeoff"
+          @goto-landing="gotoLanding"
+        />
 
         <Transition name="results">
           <ResultsCard
