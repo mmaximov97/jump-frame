@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ArrowLeft, CircleQuestionMark } from 'lucide-vue-next'
 import { useVideoPlayer } from './composables/useVideoPlayer'
 import { useFpsDetection } from './composables/useFpsDetection'
@@ -8,6 +8,7 @@ import { useMarkers } from './composables/useMarkers'
 import { useJumpCalculation } from './composables/useJumpCalculation'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
+import Timeline from './components/Timeline.vue'
 import FrameControls from './components/FrameControls.vue'
 import MarkerControls from './components/MarkerControls.vue'
 import ResultsCard from './components/ResultsCard.vue'
@@ -29,17 +30,19 @@ const {
   loadVideo,
   pause,
   togglePlayPause,
+  seekTo,
 } = useVideoPlayer()
 
 useFpsDetection(videoRef, isVideoLoaded, fps)
 
-const { currentFrame, stepForward, stepBackward } = useFrameStepping(
-  videoRef,
-  fps,
-  currentTime,
-  duration,
-  pause
-)
+const {
+  currentFrame,
+  startStepForwardHold,
+  startStepBackwardHold,
+  stopHold,
+  stepForward,
+  stepBackward,
+} = useFrameStepping(videoRef, fps, currentTime, duration, pause)
 
 const {
   takeoffTime,
@@ -78,6 +81,24 @@ function openGuide() {
   pause()
   showGuide.value = true
 }
+
+function onTimelineSeek(time: number) {
+  seekTo(time)
+}
+
+function onKeydown(e: KeyboardEvent) {
+  if (!isVideoLoaded.value) return
+  if (e.key === 'ArrowLeft') {
+    e.preventDefault()
+    stepBackward()
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault()
+    stepForward()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
@@ -133,14 +154,25 @@ function openGuide() {
       <!-- Video + playback controls -->
       <div class="flex-1 min-h-0 flex flex-col transition-all duration-300 ease-in-out">
         <VideoPlayer :src="videoSrc" @video-ref="setVideoRef" />
+        <Timeline
+          v-if="isVideoLoaded"
+          :duration="duration"
+          :current-time="currentTime"
+          :takeoff-time="takeoffTime"
+          :landing-time="landingTime"
+          :video-el="videoRef"
+          @drag-start="pause"
+          @seek="onTimelineSeek"
+        />
         <FrameControls
           v-if="isVideoLoaded"
           :is-playing="isPlaying"
           :current-time="currentTime"
           :current-frame="currentFrame"
           @toggle-play="togglePlayPause"
-          @step-forward="stepForward"
-          @step-backward="stepBackward"
+          @step-forward-hold="startStepForwardHold"
+          @step-backward-hold="startStepBackwardHold"
+          @step-stop="stopHold"
         />
       </div>
 
