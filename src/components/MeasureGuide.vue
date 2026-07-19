@@ -137,17 +137,17 @@ function toggleFaq(i: number) {
             class="bg-surface-light rounded-xl border border-surface-lighter overflow-hidden"
           >
             <button
-              class="w-full flex items-center gap-3 text-left p-3 md:p-4 min-h-11"
+              class="w-full flex items-start gap-3 text-left p-3 md:p-4 min-h-11"
               @click="toggleFaq(i)"
             >
-              <span class="text-xs font-mono text-brand-light shrink-0">Q{{ i + 1 }}</span>
+              <span class="text-xs font-mono text-brand-light shrink-0 w-5 pt-0.5">Q{{ i + 1 }}</span>
               <span class="flex-1 text-sm font-medium text-slate-200">{{ item.q }}</span>
               <ChevronDown
-                class="w-4 h-4 text-slate-500 shrink-0 transition-transform"
+                class="w-4 h-4 text-slate-500 shrink-0 mt-0.5 transition-transform"
                 :class="{ 'rotate-180': openFaq === i }"
               />
             </button>
-            <div v-if="openFaq === i" class="px-3 md:px-4 pb-3 md:pb-4 pl-11">
+            <div v-if="openFaq === i" class="pr-3 md:pr-4 pb-3 md:pb-4 pl-11 md:pl-12">
               <p class="text-sm text-slate-400 leading-relaxed">{{ item.a }}</p>
             </div>
           </div>
