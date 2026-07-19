@@ -101,8 +101,7 @@ const factText = computed(() => {
         <p class="text-slate-500">FPS</p>
         <p class="font-mono text-slate-300">{{ fps }}</p>
       </div>
-      <div>
-        <p class="text-slate-500 mb-0.5">Units</p>
+      <div class="flex items-center justify-center">
         <div class="inline-flex rounded-md bg-surface p-0.5 gap-0.5" role="group" aria-label="Units">
           <button
             type="button"
