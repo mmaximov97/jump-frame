@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { Share2 } from 'lucide-vue-next'
 
 const props = defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -14,6 +15,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'set-unit': [unit: 'metric' | 'imperial']
+  'share': []
 }>()
 
 function formatHeight(value: number | null): string {
@@ -126,5 +128,15 @@ const factText = computed(() => {
         </div>
       </div>
     </div>
+
+    <!-- 5. Share -->
+    <button
+      class="w-full min-h-11 mt-3 rounded-lg font-medium flex items-center justify-center gap-2
+             bg-brand/10 text-brand-light border border-brand/30 hover:bg-brand/20 transition-colors"
+      @click="emit('share')"
+    >
+      <Share2 class="w-4 h-4" />
+      <span>Share</span>
+    </button>
   </div>
 </template>

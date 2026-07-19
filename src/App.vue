@@ -14,9 +14,11 @@ import MarkerControls from './components/MarkerControls.vue'
 import ResultsCard from './components/ResultsCard.vue'
 import TheoryPage from './components/TheoryPage.vue'
 import MeasureGuide from './components/MeasureGuide.vue'
+import ShareCard from './components/ShareCard.vue'
 
 const showTheory = ref(false)
 const showGuide = ref(false)
+const showShareCard = ref(false)
 
 const fps = ref(60)
 
@@ -82,12 +84,17 @@ function openGuide() {
   showGuide.value = true
 }
 
+function openShareCard() {
+  pause()
+  showShareCard.value = true
+}
+
 function onTimelineSeek(time: number) {
   seekTo(time)
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (!isVideoLoaded.value) return
+  if (!isVideoLoaded.value || showShareCard.value) return
   if (e.key === 'ArrowLeft') {
     e.preventDefault()
     stepBackward()
@@ -102,8 +109,20 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
 </script>
 
 <template>
+  <!-- Share card -->
+  <ShareCard
+    v-if="showShareCard && takeoffFrame !== null && landingFrame !== null"
+    :video-src="videoSrc"
+    :takeoff-frame="takeoffFrame"
+    :landing-frame="landingFrame"
+    :fps="fps"
+    :display-height="displayHeight"
+    :flight-time="flightTimeSeconds"
+    @back="showShareCard = false"
+  />
+
   <!-- Measure guide -->
-  <MeasureGuide v-if="showGuide" @back="showGuide = false" />
+  <MeasureGuide v-else-if="showGuide" @back="showGuide = false" />
 
   <!-- Theory page -->
   <TheoryPage v-else-if="showTheory" @back="showTheory = false" />
@@ -199,6 +218,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             :unit="unit"
             :jump-height-cm="jumpHeightCm"
             @set-unit="setUnit"
+            @share="openShareCard"
           />
         </Transition>
       </div>
