@@ -10,8 +10,9 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'toggle-play': []
-  'step-forward': []
-  'step-backward': []
+  'step-forward-hold': []
+  'step-backward-hold': []
+  'step-stop': []
 }>()
 
 const timeDisplay = computed(() => {
@@ -27,8 +28,11 @@ const timeDisplay = computed(() => {
   <div class="shrink-0 flex items-center justify-center gap-2 py-1.5">
     <button
       class="p-2 rounded-lg bg-surface-light hover:bg-surface-lighter transition-colors"
-      title="Step backward"
-      @click="emit('step-backward')"
+      title="Step backward (hold to repeat)"
+      @pointerdown="emit('step-backward-hold')"
+      @pointerup="emit('step-stop')"
+      @pointerleave="emit('step-stop')"
+      @pointercancel="emit('step-stop')"
     >
       <ChevronLeft class="w-4 h-4" />
     </button>
@@ -42,8 +46,11 @@ const timeDisplay = computed(() => {
     </button>
     <button
       class="p-2 rounded-lg bg-surface-light hover:bg-surface-lighter transition-colors"
-      title="Step forward"
-      @click="emit('step-forward')"
+      title="Step forward (hold to repeat)"
+      @pointerdown="emit('step-forward-hold')"
+      @pointerup="emit('step-stop')"
+      @pointerleave="emit('step-stop')"
+      @pointercancel="emit('step-stop')"
     >
       <ChevronRight class="w-4 h-4" />
     </button>
