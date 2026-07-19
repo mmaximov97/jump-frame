@@ -144,7 +144,7 @@ function onMarkerPointerDown(time: number, e: PointerEvent) {
 </script>
 
 <template>
-  <div class="relative pt-14">
+  <div class="relative pt-14 shrink-0">
     <div
       v-if="isDragging"
       class="absolute -top-1 flex flex-col items-center -translate-x-1/2"
