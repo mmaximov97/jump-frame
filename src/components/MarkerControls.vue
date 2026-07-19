@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ArrowUpFromLine, ArrowDownToLine, Check } from 'lucide-vue-next'
 
-defineProps<{
-  takeoffSet: boolean
-  landingSet: boolean
-  hasAnyMarker: boolean
-}>()
+const props = withDefaults(
+  defineProps<{
+    takeoffSet: boolean
+    landingSet: boolean
+    hasAnyMarker: boolean
+    showClear?: boolean
+  }>(),
+  { showClear: true }
+)
 
 const emit = defineEmits<{
   'set-takeoff': []
@@ -47,7 +51,7 @@ const emit = defineEmits<{
     </div>
 
     <button
-      v-if="hasAnyMarker"
+      v-if="hasAnyMarker && props.showClear"
       class="min-h-11 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200
              bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
       @click="emit('clear-markers')"

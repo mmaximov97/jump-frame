@@ -13,7 +13,7 @@ function setRef(el: any) {
 </script>
 
 <template>
-  <div class="h-[45vh] md:h-auto md:flex-1 md:min-h-0 rounded-xl overflow-hidden bg-black flex items-center justify-center">
+  <div class="flex-1 min-h-[180px] rounded-xl overflow-hidden bg-black flex items-center justify-center">
     <video
       :ref="setRef"
       :src="src"

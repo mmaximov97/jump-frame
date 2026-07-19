@@ -20,6 +20,12 @@ const showTheory = ref(false)
 const showGuide = ref(false)
 const showShareCard = ref(false)
 
+const desktopQuery = window.matchMedia('(min-width: 768px)')
+const isDesktop = ref(desktopQuery.matches)
+function onDesktopQueryChange(e: MediaQueryListEvent) {
+  isDesktop.value = e.matches
+}
+
 const fps = ref(60)
 
 const {
@@ -113,8 +119,14 @@ function onKeydown(e: KeyboardEvent) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  desktopQuery.addEventListener('change', onDesktopQueryChange)
+})
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+  desktopQuery.removeEventListener('change', onDesktopQueryChange)
+})
 </script>
 
 <template>
@@ -157,82 +169,117 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
   </div>
 
   <!-- Player screen -->
-  <div v-else class="min-h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4 md:h-dvh">
-    <header class="flex items-center justify-between mb-2 shrink-0">
-      <div class="flex items-center gap-1 -ml-2">
-        <button
-          class="w-11 h-11 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-300 transition-colors"
-          title="New video"
-          aria-label="New video"
-          @click="videoSrc = ''; clearMarkers()"
-        >
-          <ArrowLeft class="w-4 h-4" />
-        </button>
-        <h1 class="text-sm font-bold tracking-tight md:text-xl">FrameJump</h1>
-      </div>
-      <button
-        class="flex items-center gap-1 min-h-11 px-2 -mr-2 rounded-lg text-xs text-slate-500 hover:text-brand-light transition-colors md:text-sm"
-        @click="openGuide"
-      >
-        <CircleQuestionMark class="w-3.5 h-3.5 shrink-0" />
-        <span>How to measure</span>
-      </button>
-    </header>
-
-    <div class="flex flex-col md:flex-1 md:min-h-0 md:flex-row gap-3">
-      <!-- Video + playback controls -->
-      <div class="flex flex-col md:flex-1 md:min-h-0">
-        <VideoPlayer :src="videoSrc" @video-ref="setVideoRef" />
-        <Timeline
-          v-if="isVideoLoaded"
-          :duration="duration"
-          :current-time="currentTime"
-          :takeoff-time="takeoffTime"
-          :landing-time="landingTime"
-          :video-el="videoRef"
-          @drag-start="pause"
-          @seek="onTimelineSeek"
-        />
-        <FrameControls
-          v-if="isVideoLoaded"
-          :is-playing="isPlaying"
-          :current-time="currentTime"
-          :current-frame="currentFrame"
-          @toggle-play="togglePlayPause"
-          @step-forward-hold="startStepForwardHold"
-          @step-backward-hold="startStepBackwardHold"
-          @step-stop="stopHold"
-        />
-      </div>
-
-      <!-- Side panel -->
-      <div v-if="isVideoLoaded" class="shrink-0 md:w-72 flex flex-col gap-3">
-        <MarkerControls
-          :takeoff-set="takeoffTime !== null"
-          :landing-set="landingTime !== null"
-          :has-any-marker="hasAnyMarker"
-          @set-takeoff="setTakeoff(currentTime)"
-          @set-landing="setLanding(currentTime)"
-          @clear-markers="clearMarkers"
-        />
-
-        <div ref="resultsAnchor">
-          <Transition name="results">
-            <ResultsCard
-              v-if="hasValidMarkers"
-              :display-height="displayHeight"
-              :display-error="displayError"
-              :flight-time="flightTimeSeconds"
-              :takeoff-frame="takeoffFrame"
-              :landing-frame="landingFrame"
-              :fps="fps"
-              :unit="unit"
-              :jump-height-cm="jumpHeightCm"
-              @set-unit="setUnit"
-              @share="openShareCard"
-            />
-          </Transition>
+  <div v-else class="flex flex-col">
+    <!-- Above the fold: video, timeline, playback controls, Takeoff/Landing — always fits one screen -->
+    <div class="h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4">
+      <header class="flex items-center justify-between mb-2 shrink-0">
+        <div class="flex items-center gap-1 -ml-2">
+          <button
+            class="w-11 h-11 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-300 transition-colors"
+            title="New video"
+            aria-label="New video"
+            @click="videoSrc = ''; clearMarkers()"
+          >
+            <ArrowLeft class="w-4 h-4" />
+          </button>
+          <h1 class="text-sm font-bold tracking-tight md:text-xl">FrameJump</h1>
         </div>
+        <button
+          class="flex items-center gap-1 min-h-11 px-2 -mr-2 rounded-lg text-xs text-slate-500 hover:text-brand-light transition-colors md:text-sm"
+          @click="openGuide"
+        >
+          <CircleQuestionMark class="w-3.5 h-3.5 shrink-0" />
+          <span>How to measure</span>
+        </button>
+      </header>
+
+      <div class="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
+        <!-- Video + playback controls -->
+        <div class="flex-1 min-h-0 flex flex-col">
+          <VideoPlayer :src="videoSrc" @video-ref="setVideoRef" />
+          <Timeline
+            v-if="isVideoLoaded"
+            :duration="duration"
+            :current-time="currentTime"
+            :takeoff-time="takeoffTime"
+            :landing-time="landingTime"
+            :video-el="videoRef"
+            @drag-start="pause"
+            @seek="onTimelineSeek"
+          />
+          <FrameControls
+            v-if="isVideoLoaded"
+            :is-playing="isPlaying"
+            :current-time="currentTime"
+            :current-frame="currentFrame"
+            @toggle-play="togglePlayPause"
+            @step-forward-hold="startStepForwardHold"
+            @step-backward-hold="startStepBackwardHold"
+            @step-stop="stopHold"
+          />
+        </div>
+
+        <!-- Side panel -->
+        <div v-if="isVideoLoaded" class="shrink-0 md:w-72 flex flex-col gap-3">
+          <MarkerControls
+            :takeoff-set="takeoffTime !== null"
+            :landing-set="landingTime !== null"
+            :has-any-marker="hasAnyMarker"
+            :show-clear="isDesktop"
+            @set-takeoff="setTakeoff(currentTime)"
+            @set-landing="setLanding(currentTime)"
+            @clear-markers="clearMarkers"
+          />
+
+          <!-- Desktop: result stays beside the video, no separate scroll section -->
+          <div v-if="isDesktop" ref="resultsAnchor">
+            <Transition name="results">
+              <ResultsCard
+                v-if="hasValidMarkers"
+                :display-height="displayHeight"
+                :display-error="displayError"
+                :flight-time="flightTimeSeconds"
+                :takeoff-frame="takeoffFrame"
+                :landing-frame="landingFrame"
+                :fps="fps"
+                :unit="unit"
+                :jump-height-cm="jumpHeightCm"
+                @set-unit="setUnit"
+                @share="openShareCard"
+              />
+            </Transition>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile: Clear + result live below the fold, reached by scrolling -->
+    <div v-if="!isDesktop && isVideoLoaded" class="px-3 pb-6 flex flex-col gap-3">
+      <button
+        v-if="hasAnyMarker"
+        class="min-h-11 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200
+               bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
+        @click="clearMarkers"
+      >
+        Clear
+      </button>
+
+      <div ref="resultsAnchor">
+        <Transition name="results">
+          <ResultsCard
+            v-if="hasValidMarkers"
+            :display-height="displayHeight"
+            :display-error="displayError"
+            :flight-time="flightTimeSeconds"
+            :takeoff-frame="takeoffFrame"
+            :landing-frame="landingFrame"
+            :fps="fps"
+            :unit="unit"
+            :jump-height-cm="jumpHeightCm"
+            @set-unit="setUnit"
+            @share="openShareCard"
+          />
+        </Transition>
       </div>
     </div>
   </div>
