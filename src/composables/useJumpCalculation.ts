@@ -1,5 +1,15 @@
 import { computed, ref, type Ref } from 'vue'
 
+export type DisplayUnit = 'metric' | 'imperial'
+
+export function cmToUnit(cm: number, unit: DisplayUnit): number {
+  return unit === 'metric' ? cm : cm * 0.393701
+}
+
+export function unitLabel(unit: DisplayUnit): string {
+  return unit === 'metric' ? 'cm' : 'in'
+}
+
 export function useJumpCalculation(
   takeoffTime: Ref<number | null>,
   landingTime: Ref<number | null>,

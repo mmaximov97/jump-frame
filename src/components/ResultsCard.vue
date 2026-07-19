@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { X } from 'lucide-vue-next'
+import { X, Trophy } from 'lucide-vue-next'
 
 defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -9,6 +9,7 @@ defineProps<{
   landingFrame: number | null
   fps: number
   unit: 'metric' | 'imperial'
+  newRecordDelta: { value: number; unit: string } | null
 }>()
 
 const emit = defineEmits<{
@@ -30,6 +31,10 @@ function formatError(value: number | null): string {
   if (value === null) return ''
   return '± ' + value.toFixed(1)
 }
+
+function formatDelta(value: number): string {
+  return '+' + value.toFixed(1)
+}
 </script>
 
 <template>
@@ -42,6 +47,14 @@ function formatError(value: number | null): string {
     >
       <X class="w-3.5 h-3.5" />
     </button>
+    <div
+      v-if="newRecordDelta"
+      class="flex items-center justify-center gap-1.5 mb-2 py-1.5 rounded-lg
+             bg-record/15 border border-record/40 text-record-light text-xs md:text-sm font-medium"
+    >
+      <Trophy class="w-4 h-4 shrink-0" />
+      <span>New record! {{ formatDelta(newRecordDelta.value) }} {{ newRecordDelta.unit }} to your previous best</span>
+    </div>
     <div class="flex items-baseline justify-center gap-2 mb-2">
       <p class="text-3xl md:text-5xl font-bold tracking-tight">
         {{ formatHeight(displayHeight.value) }}

@@ -4,12 +4,15 @@ import { useVideoPlayer } from './composables/useVideoPlayer'
 import { useFpsDetection } from './composables/useFpsDetection'
 import { useFrameStepping } from './composables/useFrameStepping'
 import { useMarkers } from './composables/useMarkers'
-import { useJumpCalculation } from './composables/useJumpCalculation'
+import { useJumpCalculation, cmToUnit, unitLabel } from './composables/useJumpCalculation'
+import { useJumpHistory } from './composables/useJumpHistory'
+import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
 import FrameControls from './components/FrameControls.vue'
 import MarkerControls from './components/MarkerControls.vue'
 import ResultsCard from './components/ResultsCard.vue'
+import HistoryList from './components/HistoryList.vue'
 import TheoryPage from './components/TheoryPage.vue'
 
 const showTheory = ref(false)
@@ -52,6 +55,7 @@ const {
   takeoffFrame,
   landingFrame,
   flightTimeSeconds,
+  jumpHeightCm,
   displayHeight,
   displayError,
   toggleUnit,
@@ -68,9 +72,59 @@ watch(hasValidMarkers, (valid) => {
   if (valid) resultsHidden.value = false
 })
 
+const history = useJumpHistory()
+
+// Mirrors the "is this jump implausibly slow-motion" threshold ResultsCard
+// already uses for its own Moon-jump warning, so the ⚠ in history means
+// the same thing as the ⚠ the user saw at measurement time.
+const SLOW_MO_WARNING_SECONDS = 1
+
+const newRecordDelta = computed(() => {
+  const current = jumpHeightCm.value
+  const previous = history.previousBestHeightCm.value
+  if (current === null || previous === null || current <= previous) return null
+  return { value: cmToUnit(current - previous, unit.value), unit: unitLabel(unit.value) }
+})
+
+async function saveDraft(heightCm: number, flightTime: number) {
+  const tf = takeoffFrame.value
+  const lf = landingFrame.value
+  const currentFps = fps.value
+  let thumbnail: string | null = null
+  if (videoRef.value && tf !== null && lf !== null && currentFps > 0) {
+    const midpointTime = (tf + lf) / 2 / currentFps
+    thumbnail = await captureFrameThumbnail(videoRef.value, midpointTime)
+  }
+  history.upsertDraft({
+    heightCm,
+    flightTimeSeconds: flightTime,
+    fps: currentFps,
+    thumbnail,
+    slowMoWarning: flightTime > SLOW_MO_WARNING_SECONDS,
+  })
+}
+
+watch(
+  () =>
+    hasValidMarkers.value
+      ? { heightCm: jumpHeightCm.value, flightTime: flightTimeSeconds.value }
+      : null,
+  (result) => {
+    if (!result || result.heightCm === null || result.flightTime === null) return
+    saveDraft(result.heightCm, result.flightTime)
+  }
+)
+
 function onFileSelected(file: File) {
+  history.finalizeDraft()
   clearMarkers()
   loadVideo(file)
+}
+
+function startNewVideo() {
+  history.finalizeDraft()
+  videoSrc.value = ''
+  clearMarkers()
 }
 
 function setVideoRef(el: HTMLVideoElement | null) {
@@ -98,6 +152,16 @@ function setVideoRef(el: HTMLVideoElement | null) {
           How does it work? &rarr;
         </button>
       </p>
+
+      <div v-if="history.entries.value.length > 0" class="mt-10 pt-8 border-t border-surface-lighter">
+        <HistoryList
+          :entries="history.entries.value"
+          :personal-record="history.personalRecord.value"
+          :unit="unit"
+          @delete-entry="history.deleteEntry"
+          @clear-all="history.clearAll"
+        />
+      </div>
     </div>
   </div>
 
@@ -107,7 +171,7 @@ function setVideoRef(el: HTMLVideoElement | null) {
       <h1 class="text-sm font-bold tracking-tight md:text-xl">FrameJump</h1>
       <button
         class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-        @click="videoSrc = ''; clearMarkers()"
+        @click="startNewVideo"
       >
         &larr; New video
       </button>
@@ -149,6 +213,7 @@ function setVideoRef(el: HTMLVideoElement | null) {
             :landing-frame="landingFrame"
             :fps="fps"
             :unit="unit"
+            :new-record-delta="newRecordDelta"
             @toggle-unit="toggleUnit"
             @close="resultsHidden = true"
           />
