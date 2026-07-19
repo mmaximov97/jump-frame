@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
+import { ArrowLeft, CircleQuestionMark } from 'lucide-vue-next'
 import { useVideoPlayer } from './composables/useVideoPlayer'
 import { useFpsDetection } from './composables/useFpsDetection'
 import { useFrameStepping } from './composables/useFrameStepping'
@@ -11,8 +12,10 @@ import FrameControls from './components/FrameControls.vue'
 import MarkerControls from './components/MarkerControls.vue'
 import ResultsCard from './components/ResultsCard.vue'
 import TheoryPage from './components/TheoryPage.vue'
+import MeasureGuide from './components/MeasureGuide.vue'
 
 const showTheory = ref(false)
+const showGuide = ref(false)
 
 const fps = ref(60)
 
@@ -70,11 +73,19 @@ function onFileSelected(file: File) {
 function setVideoRef(el: HTMLVideoElement | null) {
   videoRef.value = el
 }
+
+function openGuide() {
+  pause()
+  showGuide.value = true
+}
 </script>
 
 <template>
+  <!-- Measure guide -->
+  <MeasureGuide v-if="showGuide" @back="showGuide = false" />
+
   <!-- Theory page -->
-  <TheoryPage v-if="showTheory" @back="showTheory = false" />
+  <TheoryPage v-else-if="showTheory" @back="showTheory = false" />
 
   <!-- Upload screen -->
   <div v-else-if="!videoSrc" class="min-h-screen px-4 py-6 md:py-10">
@@ -98,12 +109,23 @@ function setVideoRef(el: HTMLVideoElement | null) {
   <!-- Player screen — fills viewport -->
   <div v-else class="h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4">
     <header class="flex items-center justify-between mb-2 shrink-0">
-      <h1 class="text-sm font-bold tracking-tight md:text-xl">FrameJump</h1>
+      <div class="flex items-center gap-1 -ml-2">
+        <button
+          class="w-11 h-11 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-300 transition-colors"
+          title="New video"
+          aria-label="New video"
+          @click="videoSrc = ''; clearMarkers()"
+        >
+          <ArrowLeft class="w-4 h-4" />
+        </button>
+        <h1 class="text-sm font-bold tracking-tight md:text-xl">FrameJump</h1>
+      </div>
       <button
-        class="text-xs text-slate-500 hover:text-slate-300 transition-colors"
-        @click="videoSrc = ''; clearMarkers()"
+        class="flex items-center gap-1 min-h-11 px-2 -mr-2 rounded-lg text-xs text-slate-500 hover:text-brand-light transition-colors md:text-sm"
+        @click="openGuide"
       >
-        &larr; New video
+        <CircleQuestionMark class="w-3.5 h-3.5 shrink-0" />
+        <span>How to measure</span>
       </button>
     </header>
 
