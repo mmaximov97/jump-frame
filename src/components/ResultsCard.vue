@@ -54,7 +54,8 @@ const factText = computed(() => {
 
 <template>
   <div class="relative bg-surface-light rounded-xl p-3 md:p-5 border border-surface-lighter">
-    <div class="flex items-baseline justify-center gap-2 mb-2">
+    <!-- 1. Result — the hero metric -->
+    <div class="flex items-baseline justify-center gap-2 mb-1">
       <p class="text-3xl md:text-5xl font-bold tracking-tight">
         {{ formatHeight(displayHeight.value) }}
         <span
@@ -65,34 +66,17 @@ const factText = computed(() => {
       </p>
     </div>
 
-    <div class="flex justify-center mb-2">
-      <div class="inline-flex rounded-lg bg-surface p-0.5 gap-0.5" role="group" aria-label="Units">
-        <button
-          type="button"
-          class="min-w-8 min-h-8 px-2 rounded-md text-xs transition-colors"
-          :class="unit === 'metric'
-            ? 'bg-surface-lighter text-slate-100 font-bold'
-            : 'text-slate-500 hover:text-slate-300 font-normal'"
-          @click="emit('set-unit', 'metric')"
-        >
-          cm
-        </button>
-        <button
-          type="button"
-          class="min-w-8 min-h-8 px-2 rounded-md text-xs transition-colors"
-          :class="unit === 'imperial'
-            ? 'bg-surface-lighter text-slate-100 font-bold'
-            : 'text-slate-500 hover:text-slate-300 font-normal'"
-          @click="emit('set-unit', 'imperial')"
-        >
-          in
-        </button>
-      </div>
-    </div>
-
-    <p v-if="factText" class="text-center text-xs text-slate-400 mb-2">
-      {{ factText }}
+    <!-- 2. Flight time — second most important metric, no label (the "s" already reads as time) -->
+    <p class="text-center text-lg md:text-xl font-semibold text-slate-300 mb-2">
+      {{ formatFlightTime(flightTime) }}
     </p>
+
+    <!-- 3. Fun fact — boxed callout, distinct from plain-text warnings below -->
+    <div v-if="factText" class="flex justify-center mb-2">
+      <p class="inline-block px-3 py-1.5 rounded-lg border border-brand/30 bg-brand/10 text-xs text-slate-200 text-center">
+        {{ factText }}
+      </p>
+    </div>
 
     <p v-if="isImplausible" class="text-center text-xs text-amber-400 mb-2">
       🌙 Wow, are you jumping on the Moon? {{ formatHeight(displayHeight.value) }}{{ displayHeight.unit }}
@@ -107,11 +91,8 @@ const factText = computed(() => {
       ⚠ Low FPS ({{ fps }}) — accuracy is rough. Use 120+ FPS video for reliable results.
     </p>
 
-    <div class="grid grid-cols-3 gap-2 text-center text-xs">
-      <div>
-        <p class="text-slate-500">Flight</p>
-        <p class="font-mono text-slate-300">{{ formatFlightTime(flightTime) }}</p>
-      </div>
+    <!-- 4. Secondary data — de-emphasized, smallest tier -->
+    <div class="grid grid-cols-3 gap-2 text-center text-xs pt-2 border-t border-surface-lighter/60">
       <div>
         <p class="text-slate-500">Frames</p>
         <p class="font-mono text-slate-300">{{ takeoffFrame ?? '—' }}→{{ landingFrame ?? '—' }}</p>
@@ -119,6 +100,31 @@ const factText = computed(() => {
       <div>
         <p class="text-slate-500">FPS</p>
         <p class="font-mono text-slate-300">{{ fps }}</p>
+      </div>
+      <div>
+        <p class="text-slate-500 mb-0.5">Units</p>
+        <div class="inline-flex rounded-md bg-surface p-0.5 gap-0.5" role="group" aria-label="Units">
+          <button
+            type="button"
+            class="min-w-8 min-h-8 px-1.5 rounded text-[11px] transition-colors"
+            :class="unit === 'metric'
+              ? 'bg-surface-lighter text-slate-100 font-bold'
+              : 'text-slate-500 hover:text-slate-300 font-normal'"
+            @click="emit('set-unit', 'metric')"
+          >
+            cm
+          </button>
+          <button
+            type="button"
+            class="min-w-8 min-h-8 px-1.5 rounded text-[11px] transition-colors"
+            :class="unit === 'imperial'
+              ? 'bg-surface-lighter text-slate-100 font-bold'
+              : 'text-slate-500 hover:text-slate-300 font-normal'"
+            @click="emit('set-unit', 'imperial')"
+          >
+            in
+          </button>
+        </div>
       </div>
     </div>
   </div>
