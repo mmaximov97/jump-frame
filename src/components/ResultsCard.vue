@@ -132,7 +132,7 @@ const factText = computed(() => {
     <!-- 5. Share -->
     <button
       class="w-full min-h-11 mt-3 rounded-lg font-medium flex items-center justify-center gap-2
-             bg-brand/10 text-brand-light border border-brand/30 hover:bg-brand/20 transition-colors"
+             bg-brand text-white hover:bg-brand-light transition-colors"
       @click="emit('share')"
     >
       <Share2 class="w-4 h-4" />

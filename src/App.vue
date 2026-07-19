@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ArrowLeft, CircleQuestionMark } from 'lucide-vue-next'
 import { useVideoPlayer } from './composables/useVideoPlayer'
 import { useFpsDetection } from './composables/useFpsDetection'
@@ -70,6 +70,15 @@ const hasAnyMarker = computed(
   () => takeoffTime.value !== null || landingTime.value !== null
 )
 
+const resultsAnchor = ref<HTMLElement | null>(null)
+
+watch(hasValidMarkers, (valid) => {
+  if (!valid) return
+  nextTick(() => {
+    resultsAnchor.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  })
+})
+
 function onFileSelected(file: File) {
   clearMarkers()
   loadVideo(file)
@@ -118,6 +127,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     :fps="fps"
     :display-height="displayHeight"
     :flight-time="flightTimeSeconds"
+    :jump-height-cm="jumpHeightCm"
     @back="showShareCard = false"
   />
 
@@ -146,8 +156,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
     </div>
   </div>
 
-  <!-- Player screen — fills viewport -->
-  <div v-else class="h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4">
+  <!-- Player screen -->
+  <div v-else class="min-h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4 md:h-dvh">
     <header class="flex items-center justify-between mb-2 shrink-0">
       <div class="flex items-center gap-1 -ml-2">
         <button
@@ -169,9 +179,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </button>
     </header>
 
-    <div class="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
+    <div class="flex flex-col md:flex-1 md:min-h-0 md:flex-row gap-3">
       <!-- Video + playback controls -->
-      <div class="flex-1 min-h-0 flex flex-col transition-all duration-300 ease-in-out">
+      <div class="flex flex-col md:flex-1 md:min-h-0">
         <VideoPlayer :src="videoSrc" @video-ref="setVideoRef" />
         <Timeline
           v-if="isVideoLoaded"
@@ -206,21 +216,23 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
           @clear-markers="clearMarkers"
         />
 
-        <Transition name="results">
-          <ResultsCard
-            v-if="hasValidMarkers"
-            :display-height="displayHeight"
-            :display-error="displayError"
-            :flight-time="flightTimeSeconds"
-            :takeoff-frame="takeoffFrame"
-            :landing-frame="landingFrame"
-            :fps="fps"
-            :unit="unit"
-            :jump-height-cm="jumpHeightCm"
-            @set-unit="setUnit"
-            @share="openShareCard"
-          />
-        </Transition>
+        <div ref="resultsAnchor">
+          <Transition name="results">
+            <ResultsCard
+              v-if="hasValidMarkers"
+              :display-height="displayHeight"
+              :display-error="displayError"
+              :flight-time="flightTimeSeconds"
+              :takeoff-frame="takeoffFrame"
+              :landing-frame="landingFrame"
+              :fps="fps"
+              :unit="unit"
+              :jump-height-cm="jumpHeightCm"
+              @set-unit="setUnit"
+              @share="openShareCard"
+            />
+          </Transition>
+        </div>
       </div>
     </div>
   </div>

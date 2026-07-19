@@ -91,6 +91,45 @@ export function useShareCard() {
     }
   }
 
+  // Same tone as ResultsCard's fun-fact tiers, adapted with an emoji for the shareable Stats card.
+  const STATS_FACTS: { min: number; max: number; emoji: string; text: string }[] = [
+    { min: 0, max: 25, emoji: '⬆️', text: 'Every jump counts — keep stacking reps.' },
+    { min: 25, max: 45, emoji: '💪', text: "Solid liftoff — that's a respectable adult vertical." },
+    { min: 45, max: 65, emoji: '🔥', text: "Above average — nice hops!" },
+    { min: 65, max: Infinity, emoji: '🏀', text: 'NBA-average air (~71 cm) — jumping with the pros!' },
+  ]
+
+  const DEFAULT_FACT = { emoji: '🚀', text: 'Measured with FrameJump.' }
+
+  function getStatsFact(jumpHeightCm: number | null) {
+    if (jumpHeightCm === null) return DEFAULT_FACT
+    return STATS_FACTS.find((t) => jumpHeightCm >= t.min && jumpHeightCm < t.max) ?? DEFAULT_FACT
+  }
+
+  function wrapCenteredText(
+    ctx: CanvasRenderingContext2D,
+    text: string,
+    cx: number,
+    startY: number,
+    maxWidth: number,
+    lineHeight: number
+  ) {
+    const words = text.split(' ')
+    const lines: string[] = []
+    let line = ''
+    for (const word of words) {
+      const candidate = line ? `${line} ${word}` : word
+      if (line && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(line)
+        line = word
+      } else {
+        line = candidate
+      }
+    }
+    if (line) lines.push(line)
+    lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lineHeight))
+  }
+
   function drawCoverImage(
     ctx: CanvasRenderingContext2D,
     source: HTMLCanvasElement,
@@ -111,7 +150,8 @@ export function useShareCard() {
     fmt: ShareFormat,
     heightLabel: string,
     flightLabel: string,
-    dateLabel: string
+    dateLabel: string,
+    jumpHeightCm: number | null
   ) {
     ctx.clearRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
     ctx.textAlign = 'center'
@@ -124,18 +164,29 @@ export function useShareCard() {
       ctx.fillStyle = bg
       ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
 
-      ctx.fillStyle = TEXT_LIGHT
-      ctx.font = '700 240px system-ui, -apple-system, sans-serif'
-      ctx.fillText(heightLabel, CARD_WIDTH / 2, 800)
+      const fact = getStatsFact(jumpHeightCm)
 
-      ctx.font = '500 52px system-ui, sans-serif'
+      ctx.font = '160px system-ui, -apple-system, sans-serif'
+      ctx.fillText(fact.emoji, CARD_WIDTH / 2, 340)
+
+      ctx.fillStyle = TEXT_LIGHT
+      ctx.font = '700 210px system-ui, -apple-system, sans-serif'
+      ctx.fillText(heightLabel, CARD_WIDTH / 2, 620)
+
+      ctx.font = '700 78px system-ui, sans-serif'
+      ctx.fillStyle = BRAND_LIGHT
+      ctx.fillText(`⏱ ${flightLabel}`, CARD_WIDTH / 2, 760)
+
+      ctx.font = '500 46px system-ui, sans-serif'
       ctx.fillStyle = TEXT_MUTED
-      ctx.fillText(`Flight time · ${flightLabel}`, CARD_WIDTH / 2, 930)
-      ctx.fillText(dateLabel, CARD_WIDTH / 2, 1010)
+      wrapCenteredText(ctx, fact.text, CARD_WIDTH / 2, 880, 880, 60)
+
+      ctx.font = '500 38px system-ui, sans-serif'
+      ctx.fillStyle = TEXT_MUTED
+      ctx.fillText(dateLabel, CARD_WIDTH / 2, CARD_HEIGHT - 160)
 
       ctx.font = '700 44px system-ui, sans-serif'
-      ctx.fillStyle = TEXT_MUTED
-      ctx.fillText('FrameJump', CARD_WIDTH / 2, CARD_HEIGHT - 120)
+      ctx.fillText('FrameJump', CARD_WIDTH / 2, CARD_HEIGHT - 90)
       return
     }
 

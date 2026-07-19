@@ -10,6 +10,7 @@ const props = defineProps<{
   fps: number
   displayHeight: { value: number | null; unit: string }
   flightTime: number | null
+  jumpHeightCm: number | null
 }>()
 
 const emit = defineEmits<{
@@ -56,7 +57,7 @@ function draw() {
   if (!canvas || !frame) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
-  renderCard(ctx, frame, format.value, heightLabel.value, flightLabel.value, dateLabel.value)
+  renderCard(ctx, frame, format.value, heightLabel.value, flightLabel.value, dateLabel.value, props.jumpHeightCm)
 }
 
 watch([selectedIndex, format, candidates], () => nextTick(draw))
@@ -130,7 +131,7 @@ function retryExtraction() {
         <button
           class="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg text-slate-400
                  hover:text-slate-100 hover:bg-surface-light transition-colors disabled:opacity-30 disabled:pointer-events-none"
-          :disabled="isLoading || !!loadError || selectedIndex <= 0"
+          :disabled="isLoading || !!loadError || format === 'stats' || selectedIndex <= 0"
           aria-label="Previous frame"
           @click="goPrev"
         >
@@ -170,7 +171,7 @@ function retryExtraction() {
         <button
           class="w-11 h-11 shrink-0 flex items-center justify-center rounded-lg text-slate-400
                  hover:text-slate-100 hover:bg-surface-light transition-colors disabled:opacity-30 disabled:pointer-events-none"
-          :disabled="isLoading || !!loadError || selectedIndex >= candidates.length - 1"
+          :disabled="isLoading || !!loadError || format === 'stats' || selectedIndex >= candidates.length - 1"
           aria-label="Next frame"
           @click="goNext"
         >
@@ -178,16 +179,17 @@ function retryExtraction() {
         </button>
       </div>
 
-      <!-- Frame position dots -->
-      <div v-if="!isLoading && !loadError" class="flex items-center justify-center gap-1.5 mb-6">
-        <span
-          v-for="(c, i) in candidates"
-          :key="c.frameIndex"
-          class="w-1.5 h-1.5 rounded-full transition-colors"
-          :class="i === selectedIndex ? 'bg-brand-light' : 'bg-surface-lighter'"
-        />
+      <!-- Frame position dots — fixed-height slot so switching states/formats never shifts the layout below -->
+      <div class="h-1.5 mb-6 flex items-center justify-center gap-1.5">
+        <template v-if="!isLoading && !loadError && format !== 'stats'">
+          <span
+            v-for="(c, i) in candidates"
+            :key="c.frameIndex"
+            class="w-1.5 h-1.5 rounded-full transition-colors"
+            :class="i === selectedIndex ? 'bg-brand-light' : 'bg-surface-lighter'"
+          />
+        </template>
       </div>
-      <div v-else class="h-6 mb-6" />
 
       <!-- Format picker -->
       <div class="grid grid-cols-3 gap-2 mb-6">
@@ -196,7 +198,7 @@ function retryExtraction() {
           :key="f.key"
           class="min-h-11 rounded-lg text-sm font-medium border transition-colors disabled:opacity-40 disabled:pointer-events-none"
           :class="format === f.key
-            ? 'bg-brand text-white border-brand'
+            ? 'bg-brand/20 text-brand-light border-brand/40'
             : 'bg-surface-light text-slate-400 border-surface-lighter hover:text-slate-200'"
           :disabled="isLoading || !!loadError"
           @click="format = f.key"
@@ -208,7 +210,7 @@ function retryExtraction() {
       <!-- Action -->
       <button
         class="w-full min-h-11 rounded-lg font-medium flex items-center justify-center gap-2
-               bg-brand/15 text-brand-light border border-brand/40 hover:bg-brand/25 transition-colors
+               bg-brand text-white hover:bg-brand-light transition-colors
                disabled:opacity-40 disabled:pointer-events-none"
         :disabled="isLoading || !!loadError || isGenerating"
         @click="handleAction"
