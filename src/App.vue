@@ -171,7 +171,7 @@ onUnmounted(() => {
   <!-- Player screen -->
   <div v-else class="flex flex-col">
     <!-- Above the fold: video, timeline, playback controls, Takeoff/Landing — always fits one screen -->
-    <div class="h-dvh flex flex-col px-3 py-2 md:px-4 md:py-4">
+    <div class="h-dvh flex flex-col px-3 pt-2 pb-4 md:px-4 md:py-4">
       <header class="flex items-center justify-between mb-2 shrink-0">
         <div class="flex items-center gap-1 -ml-2">
           <button

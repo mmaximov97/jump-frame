@@ -106,14 +106,8 @@ export function useShareCard() {
     return STATS_FACTS.find((t) => jumpHeightCm >= t.min && jumpHeightCm < t.max) ?? DEFAULT_FACT
   }
 
-  function wrapCenteredText(
-    ctx: CanvasRenderingContext2D,
-    text: string,
-    cx: number,
-    startY: number,
-    maxWidth: number,
-    lineHeight: number
-  ) {
+  // ctx.font must already be set to the font these lines will render in.
+  function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
     const words = text.split(' ')
     const lines: string[] = []
     let line = ''
@@ -127,7 +121,30 @@ export function useShareCard() {
       }
     }
     if (line) lines.push(line)
-    lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lineHeight))
+    return lines
+  }
+
+  interface StatsLine {
+    text: string
+    font: string
+    color: string
+    size: number
+    gapAfter: number
+  }
+
+  // Draws a stack of baselines centered as one group in the card, instead of
+  // pinning content to the top with dead space below — the line count (and
+  // therefore the block's total height) varies with how the fact text wraps.
+  function drawCenteredStack(ctx: CanvasRenderingContext2D, cx: number, lines: StatsLine[]) {
+    const totalHeight = lines.reduce((sum, l) => sum + l.size + l.gapAfter, 0)
+    let cursor = (CARD_HEIGHT - totalHeight) / 2
+    for (const line of lines) {
+      cursor += line.size
+      ctx.font = line.font
+      ctx.fillStyle = line.color
+      ctx.fillText(line.text, cx, cursor)
+      cursor += line.gapAfter
+    }
   }
 
   function drawCoverImage(
@@ -165,28 +182,28 @@ export function useShareCard() {
       ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT)
 
       const fact = getStatsFact(jumpHeightCm)
+      const cx = CARD_WIDTH / 2
 
-      ctx.font = '160px system-ui, -apple-system, sans-serif'
-      ctx.fillText(fact.emoji, CARD_WIDTH / 2, 340)
+      const factFont = '500 46px system-ui, sans-serif'
+      ctx.font = factFont
+      const factLines = wrapText(ctx, fact.text, 880)
 
-      ctx.fillStyle = TEXT_LIGHT
-      ctx.font = '700 210px system-ui, -apple-system, sans-serif'
-      ctx.fillText(heightLabel, CARD_WIDTH / 2, 620)
+      const lines: StatsLine[] = [
+        { text: fact.emoji, font: '160px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 160, gapAfter: 30 },
+        { text: heightLabel, font: '700 210px system-ui, -apple-system, sans-serif', color: TEXT_LIGHT, size: 210, gapAfter: 20 },
+        { text: `⏱ ${flightLabel}`, font: '700 78px system-ui, sans-serif', color: BRAND_LIGHT, size: 78, gapAfter: 40 },
+        ...factLines.map((text, i) => ({
+          text,
+          font: factFont,
+          color: TEXT_MUTED,
+          size: 46,
+          gapAfter: i === factLines.length - 1 ? 70 : 14,
+        })),
+        { text: dateLabel, font: '500 38px system-ui, sans-serif', color: TEXT_MUTED, size: 38, gapAfter: 20 },
+        { text: 'FrameJump', font: '700 44px system-ui, sans-serif', color: TEXT_MUTED, size: 44, gapAfter: 0 },
+      ]
 
-      ctx.font = '700 78px system-ui, sans-serif'
-      ctx.fillStyle = BRAND_LIGHT
-      ctx.fillText(`⏱ ${flightLabel}`, CARD_WIDTH / 2, 760)
-
-      ctx.font = '500 46px system-ui, sans-serif'
-      ctx.fillStyle = TEXT_MUTED
-      wrapCenteredText(ctx, fact.text, CARD_WIDTH / 2, 880, 880, 60)
-
-      ctx.font = '500 38px system-ui, sans-serif'
-      ctx.fillStyle = TEXT_MUTED
-      ctx.fillText(dateLabel, CARD_WIDTH / 2, CARD_HEIGHT - 160)
-
-      ctx.font = '700 44px system-ui, sans-serif'
-      ctx.fillText('FrameJump', CARD_WIDTH / 2, CARD_HEIGHT - 90)
+      drawCenteredStack(ctx, cx, lines)
       return
     }
 
