@@ -22,6 +22,7 @@ const {
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onPointerCancel,
   onWheel,
   zoomIn,
   zoomOut,
@@ -48,7 +49,7 @@ defineExpose({ zoomIn, zoomOut, resetZoom: reset, project, isZoomed })
     @pointerdown="onPointerDown"
     @pointermove="onPointerMove"
     @pointerup="onPointerUp"
-    @pointercancel="onPointerUp"
+    @pointercancel="onPointerCancel"
     @wheel.prevent="onWheel"
   >
     <video
@@ -70,11 +71,11 @@ defineExpose({ zoomIn, zoomOut, resetZoom: reset, project, isZoomed })
              rounded-lg bg-black/60 backdrop-blur text-xs font-medium text-slate-200
              hover:bg-black/80 transition-colors"
       title="Reset zoom"
-      aria-label="Reset zoom"
+      :aria-label="`Reset zoom (currently ${scale.toFixed(2)}×)`"
       @click="reset"
     >
       <Minimize2 class="w-4 h-4" />
-      <span>{{ scale.toFixed(1) }}×</span>
+      <span>{{ scale.toFixed(2) }}×</span>
     </button>
   </div>
 </template>

@@ -17,12 +17,20 @@ export interface Box {
  * Computed rather than measured on purpose — once a transform is applied to
  * the <video>, getBoundingClientRect() reports the zoomed rectangle, and
  * every projection here needs the unzoomed one.
+ *
+ * Models the CSS this function stands in for: the <video> is `max-w-full
+ * max-h-full`, which only ever shrinks a replaced element to fit its
+ * container — it never enlarges one that's already smaller. `fit` must stay
+ * capped at 1 for the same reason. (Do not add `w-full`/`h-full` to the
+ * <video> class list — that would upscale the element in the DOM while this
+ * function kept reporting the unscaled box, breaking the correspondence this
+ * whole matrix — and the `transform-origin` it assumes — depends on.)
  */
 export function computeVideoBox(container: Size, intrinsic: Size): Box {
   if (intrinsic.width <= 0 || intrinsic.height <= 0) {
     return { left: container.width / 2, top: container.height / 2, width: 0, height: 0 }
   }
-  const fit = Math.min(container.width / intrinsic.width, container.height / intrinsic.height)
+  const fit = Math.min(1, container.width / intrinsic.width, container.height / intrinsic.height)
   const width = intrinsic.width * fit
   const height = intrinsic.height * fit
   return {

@@ -122,9 +122,9 @@ export function useVideoZoom(
       return
     }
 
+    if (distance(current, gestureStart) > TAP_SLOP_PX) gestureMoved = true
     if (isZoomed.value) {
       e.preventDefault()
-      if (distance(current, gestureStart) > TAP_SLOP_PX) gestureMoved = true
       state.value = panBy(state.value, box.value, current.x - previous.x, current.y - previous.y)
     }
   }
@@ -148,6 +148,17 @@ export function useVideoZoom(
 
     lastTapAt = e.timeStamp
     lastTapPoint = released
+  }
+
+  // The browser sends pointercancel when it aborts a gesture out from under
+  // us — most notably when a touch-scroll takeover kicks in. That is by
+  // definition not a completed tap, so mark it moved before running the same
+  // cleanup as onPointerUp. This also covers a stationary two-finger
+  // touch-and-release with zero intervening pointermove, which would
+  // otherwise fall through to tap detection.
+  function onPointerCancel(e: PointerEvent) {
+    gestureMoved = true
+    onPointerUp(e)
   }
 
   function onWheel(e: WheelEvent) {
@@ -218,6 +229,7 @@ export function useVideoZoom(
     onPointerDown,
     onPointerMove,
     onPointerUp,
+    onPointerCancel,
     onWheel,
     zoomIn,
     zoomOut,

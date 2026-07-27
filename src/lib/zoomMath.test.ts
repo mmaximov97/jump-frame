@@ -22,6 +22,11 @@ describe('computeVideoBox', () => {
     const box = computeVideoBox({ width: 400, height: 300 }, { width: 0, height: 0 })
     expect(box).toEqual({ left: 200, top: 150, width: 0, height: 0 })
   })
+
+  it('never upscales a clip smaller than the container, matching max-w-full/max-h-full', () => {
+    const box = computeVideoBox({ width: 948, height: 682 }, { width: 640, height: 480 })
+    expect(box).toEqual({ left: 154, top: 101, width: 640, height: 480 })
+  })
 })
 
 describe('clampZoom', () => {
