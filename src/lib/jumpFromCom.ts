@@ -64,3 +64,68 @@ export function analyseJump(frames: PoseFrame[], video: VideoSize): JumpAnalysis
     landingFrame: phase.landingFrame,
   }
 }
+
+export interface QualityMetrics {
+  rSquared: number
+  flightFrames: number
+  statureM: number
+  comHeightCm: number
+  flightTimeHeightCm: number
+}
+
+export type Verdict =
+  | { kind: 'ok'; heightCm: number }
+  | { kind: 'warn'; heightCm: number; message: string }
+  | { kind: 'unusable'; message: string }
+
+const MIN_FLIGHT_FRAMES = 8
+const MIN_USABLE_R_SQUARED = 0.95
+const MIN_CLEAN_R_SQUARED = 0.99
+const MIN_STATURE_M = 1.3
+const MAX_STATURE_M = 2.2
+const MAX_METHOD_DISAGREEMENT = 0.2
+
+/**
+ * Decides what the user is shown: a number, a number with a caveat, or a
+ * refusal. Checks run in order and the first one to fire wins.
+ *
+ * The cost of being wrong is asymmetric, and that asymmetry sets every
+ * threshold here. Too strict and warnings fire on ordinary jumps until people
+ * stop reading them. Too lax and someone publishes a height they never
+ * reached — which is worse, because the app's credibility lasts exactly until
+ * the first debunked result.
+ */
+export function assess(m: QualityMetrics): Verdict {
+  if (!Number.isFinite(m.comHeightCm) || m.comHeightCm <= 0) {
+    return { kind: 'unusable', message: 'Не удалось измерить прыжок по этому видео.' }
+  }
+  if (m.flightFrames < MIN_FLIGHT_FRAMES) {
+    return { kind: 'unusable', message: 'Слишком короткий полёт для анализа.' }
+  }
+  if (m.rSquared < MIN_USABLE_R_SQUARED) {
+    return { kind: 'unusable', message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.' }
+  }
+  // A scale error is always a factor of k squared, so at least fourfold. The
+  // band is wide on purpose: it should never fire on a short teenager, only
+  // on a timebase that is flatly wrong.
+  if (m.statureM < MIN_STATURE_M || m.statureM > MAX_STATURE_M) {
+    return { kind: 'unusable', message: 'Похоже, видео в замедленной съёмке — результат недостоверен.' }
+  }
+  if (m.rSquared < MIN_CLEAN_R_SQUARED) {
+    return { kind: 'warn', heightCm: m.comHeightCm, message: 'Трекинг местами срывался — цифра приблизительная.' }
+  }
+  if (Math.abs(m.comHeightCm - m.flightTimeHeightCm) / m.comHeightCm > MAX_METHOD_DISAGREEMENT) {
+    return { kind: 'warn', heightCm: m.comHeightCm, message: 'Поза на отрыве и приземлении заметно различаются.' }
+  }
+  return { kind: 'ok', heightCm: m.comHeightCm }
+}
+
+export function measureJump(
+  frames: PoseFrame[], video: VideoSize
+): { analysis: JumpAnalysis | null; verdict: Verdict } {
+  const analysis = analyseJump(frames, video)
+  if (!analysis) {
+    return { analysis: null, verdict: { kind: 'unusable', message: 'Не нашли прыжок в этом видео.' } }
+  }
+  return { analysis, verdict: assess(analysis) }
+}
