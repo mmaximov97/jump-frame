@@ -533,6 +533,8 @@ git commit -m "Add landmark projection shared by zoom and the future pose overla
 
 **Двойной тап детектируется вручную, а не через `dblclick`.** Pointer Events единообразны для мыши и касания, поэтому одна реализация закрывает оба случая, и её поведение не зависит от того, синтезирует ли конкретный браузер `dblclick` при `touch-action: none`.
 
+**Порог `TAP_SLOP_PX` обязателен, иначе двойной тап на выход из зума не работает.** При `scale > 1` любое `pointermove` — включая дрожание сенсора на неподвижном пальце — попадает в ветку панорамы и ставит `gestureMoved = true`. Ранний выход в `onPointerUp` (`if (!released || pointers.size > 0 || gestureMoved) return`) происходит **до** записи `lastTapAt`, поэтому тап не просто игнорируется, а вообще не регистрируется, и следующему тапу не с чем составить пару. Панорама при этом должна вызываться как обычно с первого же пикселя — порог влияет только на `gestureMoved`. В ветке пинча `gestureMoved` ставится безусловно: два пальца никогда не тап.
+
 - [ ] **Step 1: Написать композабл**
 
 Создать `src/composables/useVideoZoom.ts`:
@@ -554,6 +556,9 @@ import {
 const DOUBLE_TAP_SCALE = 3
 const DOUBLE_TAP_MS = 300
 const DOUBLE_TAP_SLOP_PX = 30
+// Movement below this counts as a stationary tap, not a drag. Without it,
+// touch-sensor jitter sets gestureMoved and the tap is never recorded.
+const TAP_SLOP_PX = 5
 const WHEEL_SENSITIVITY = 0.002
 const KEY_ZOOM_FACTOR = 1.25
 
@@ -582,6 +587,7 @@ export function useVideoZoom(
   let pinchDistance = 0
   let pinchCentre: Point = { x: 0, y: 0 }
   let gestureMoved = false
+  let gestureStart: Point = { x: 0, y: 0 }
   let lastTapAt = 0
   let lastTapPoint: Point = { x: 0, y: 0 }
 
@@ -621,7 +627,10 @@ export function useVideoZoom(
   function onPointerDown(e: PointerEvent) {
     // The reset button lives inside the container; its taps are not gestures.
     if ((e.target as HTMLElement).closest('button')) return
-    if (pointers.size === 0) gestureMoved = false
+    if (pointers.size === 0) {
+      gestureMoved = false
+      gestureStart = localPoint(e)
+    }
     pointers.set(e.pointerId, localPoint(e))
     containerRef.value?.setPointerCapture(e.pointerId)
     if (pointers.size === 2) {
@@ -659,7 +668,10 @@ export function useVideoZoom(
 
     if (isZoomed.value) {
       e.preventDefault()
-      gestureMoved = true
+      // Pan from the very first pixel, but only call it a gesture once the
+      // finger has actually travelled — otherwise sensor jitter during a
+      // stationary tap suppresses double-tap detection in onPointerUp.
+      if (distance(current, gestureStart) > TAP_SLOP_PX) gestureMoved = true
       state.value = panBy(state.value, box.value, current.x - previous.x, current.y - previous.y)
     }
   }
