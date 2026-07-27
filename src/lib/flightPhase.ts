@@ -1,3 +1,4 @@
+import { fitParabola } from './parabolaFit'
 import type { ComTrack } from './comTrack'
 
 export interface FlightPhase {
@@ -33,8 +34,34 @@ const FLOOR_PERCENTILE = 0.9
 const AIRBORNE_THRESHOLD_FRACTION = 0.02
 /** Nobody stays in the air this long; a longer run is not a jump. */
 const MAX_FLIGHT_SECONDS = 1.5
-/** How many airborne frames feed the sub-frame edge estimate. */
+/**
+ * How many airborne frames feed the sub-frame edge estimate.
+ *
+ * Measured 3, 4, 5, and 6 with the quadratic crossing (see quadraticCrossing)
+ * on the PR-B acceptance grid plus this module's own fps x takeoffPhase grid,
+ * tracking landing as well as takeoff:
+ *   - 5 and 6 REGRESS an already-passing test (`fps=30, takeoffPhase=0.8`
+ *     landing error grows to 1.07x its own bar) — a longer window starts
+ *     reaching past where the airborne run is still cleanly ballistic for a
+ *     short flight, and are disqualified on that alone.
+ *   - 3 and 4 both leave this module's grid comfortably passing. 3 is
+ *     slightly more accurate clean (tuck-free) and slightly better on the
+ *     acceptance suite's leg-tuck case (1.04 cm vs 1.21 cm error, both still
+ *     over the 1 cm bar). 4 is the better choice under landmark noise, the
+ *     more realistic failure mode: on the acceptance suite's own 5 noise
+ *     seeds, 4's worst case is 2.44 cm against 3's 4.66 cm; widened to 30
+ *     seeds, 4 keeps a lower mean (1.89 vs 2.16 cm) and RMS (2.32 vs 2.76 cm).
+ * Kept at 4, the value Task 4 already established and reviewed, since it is
+ * not dominated by 3 on the criterion that matters most for real footage.
+ */
 const EDGE_FIT_FRAMES = 4
+/**
+ * Fewer edge samples than this and a quadratic crossing is not attempted —
+ * three points are the minimum that determine a parabola at all. Below the
+ * minimum, or whenever the quadratic path declines (see quadraticCrossing),
+ * crossingTime falls back to the two-point-minimum linear fit.
+ */
+const MIN_QUADRATIC_FIT_FRAMES = 3
 /**
  * How many extra frames beyond the coarse threshold boundary get tested for
  * reclassification. This is a backstop on how far the walk may reach, not
@@ -128,16 +155,77 @@ function extendBoundary(
   return extended
 }
 
+/** Sign used by the stable quadratic solve below: +1 for b >= 0, else -1. */
+function sign(x: number): number {
+  return x < 0 ? -1 : 1
+}
+
 /**
- * When did the foot cross the floor?
+ * Real roots of a*t^2 + b*t + c = 0, in unspecified order. Returns null for
+ * a === 0 or a negative discriminant.
  *
- * Fitted over airborne frames ONLY. The tempting two-point interpolation
- * through the last contact frame does not work: the foot is on the floor at
- * that frame by definition, so the line crosses the floor exactly there
- * whatever the speed — trading a half-frame-late bias for a half-frame-early
- * one. Extrapolating the airborne trajectory backwards has no such anchor.
+ * Uses the numerically stable form (Numerical Recipes §5.6) rather than the
+ * textbook (-b +/- sqrt(disc)) / 2a: when one root sits much closer to zero
+ * than the other — exactly this situation, where one root is near the true
+ * takeoff/landing crossing and the other is far outside the sampled window —
+ * the textbook formula subtracts two nearly-equal quantities for the small
+ * root and loses precision to cancellation. Computing one root via the sum
+ * (whichever sign avoids cancellation) and the other via the product of
+ * roots (c/a = root1*root2) avoids that entirely.
  */
-function crossingTime(
+function quadraticRoots(a: number, b: number, c: number): [number, number] | null {
+  if (a === 0) return null
+  const discriminant = b * b - 4 * a * c
+  if (discriminant < 0) return null
+  const sqrtD = Math.sqrt(discriminant)
+  const q = -0.5 * (b + sign(b) * sqrtD)
+  if (q === 0) {
+    // b === 0 and discriminant === -4ac: roots are symmetric about zero.
+    const root = Math.sqrt(-c / a)
+    return [-root, root]
+  }
+  return [q / a, c / q]
+}
+
+/**
+ * Quadratic crossing estimate: a foot in free flight is ballistic under the
+ * same g as the body's com, so near takeoff/landing its trajectory is a
+ * parabola, not a line. A chord across the sampled edge frames is measurably
+ * SHALLOWER than the initial tangent (the true curve is concave), so
+ * extrapolating that chord crosses the floor too early — this is the ~2.6 cm
+ * bias PR-B's acceptance suite measured before this fix. Fitting the
+ * curvature directly (reusing fitParabola from the com fit itself) removes
+ * that bias instead of merely shrinking it.
+ *
+ * Returns null — meaning "fall back to the linear estimate" — when: the fit
+ * is not ballistic (fitParabola rejects c2 <= 0, e.g. exactly-linear or noisy
+ * data); the crossing has no real root; or neither root lands inside
+ * `bounds`. That last case matters as much as the first two: an
+ * extrapolation that misses the narrow window it is supposed to explain is
+ * not more trustworthy for having come from a fancier model, and `bounds`
+ * already encodes which of the two roots is "the correct side" (the earlier
+ * root for takeoff, the later one for landing) without needing to say so
+ * explicitly — only one root can plausibly land inside a window narrower
+ * than a single frame.
+ */
+function quadraticCrossing(
+  times: number[], footY: number[], indices: number[], floorY: number, bounds: [number, number]
+): number | null {
+  const fit = fitParabola(indices.map((i) => times[i]!), indices.map((i) => footY[i]!))
+  if (!fit) return null
+  const roots = quadraticRoots(fit.c2, fit.c1, fit.c0 - floorY)
+  if (!roots) return null
+  const [lo, hi] = bounds
+  const inBounds = roots.filter((t) => Number.isFinite(t) && t >= lo && t <= hi)
+  if (inBounds.length === 0) return null
+  // Two roots both landing inside a sub-frame-wide window is not physically
+  // expected (see above) but is not provably impossible from the types
+  // alone, so pick deterministically rather than leave it to array order.
+  return inBounds.reduce((closest, t) => (Math.abs(t - hi) < Math.abs(closest - hi) ? t : closest))
+}
+
+/** The linear crossing estimate — the original method, kept as the fallback. */
+function linearCrossing(
   times: number[], footY: number[], indices: number[], floorY: number, fallback: number,
   bounds: [number, number]
 ): number {
@@ -148,6 +236,31 @@ function crossingTime(
   // Takeoff cannot precede the last contact frame, nor follow the first
   // airborne one. Clamping keeps a bad extrapolation physically possible.
   return Math.min(bounds[1], Math.max(bounds[0], t))
+}
+
+/**
+ * When did the foot cross the floor?
+ *
+ * Fitted over airborne frames ONLY. The tempting two-point interpolation
+ * through the last contact frame does not work: the foot is on the floor at
+ * that frame by definition, so the line crosses the floor exactly there
+ * whatever the speed — trading a half-frame-late bias for a half-frame-early
+ * one. Extrapolating the airborne trajectory backwards has no such anchor.
+ *
+ * Prefers a quadratic fit (see quadraticCrossing) over the linear one
+ * wherever there are enough points and the quadratic result is trustworthy;
+ * falls back to the linear fit otherwise, which is itself already a
+ * documented fallback (returns `fallback` when even that degenerates).
+ */
+function crossingTime(
+  times: number[], footY: number[], indices: number[], floorY: number, fallback: number,
+  bounds: [number, number]
+): number {
+  if (indices.length >= MIN_QUADRATIC_FIT_FRAMES) {
+    const quadratic = quadraticCrossing(times, footY, indices, floorY, bounds)
+    if (quadratic !== null) return quadratic
+  }
+  return linearCrossing(times, footY, indices, floorY, fallback, bounds)
 }
 
 export function findFlightPhase(track: ComTrack): FlightPhase | null {
