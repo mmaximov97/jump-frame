@@ -65,3 +65,36 @@ export function clampZoom(state: ZoomState, box: Box): ZoomState {
     ty: withoutNegativeZero(Math.min(maxTy, Math.max(-maxTy, state.ty))),
   }
 }
+
+export interface Point {
+  x: number
+  y: number
+}
+
+/**
+ * Scales by `factor` while holding whatever sits under `anchor` stationary.
+ *
+ * Screen position of a layout point is `c + (p - c) * s + t`. Solving that
+ * for the new offset under the constraint that the anchored point does not
+ * move gives `t' = d - (d - t) * s'/s`, where `d = anchor - c`.
+ */
+export function zoomAbout(state: ZoomState, box: Box, anchor: Point, factor: number): ZoomState {
+  const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale * factor))
+  const ratio = nextScale / state.scale
+  const cx = box.left + box.width / 2
+  const cy = box.top + box.height / 2
+  const dx = anchor.x - cx
+  const dy = anchor.y - cy
+  return clampZoom(
+    {
+      scale: nextScale,
+      tx: dx - (dx - state.tx) * ratio,
+      ty: dy - (dy - state.ty) * ratio,
+    },
+    box
+  )
+}
+
+export function panBy(state: ZoomState, box: Box, dx: number, dy: number): ZoomState {
+  return clampZoom({ scale: state.scale, tx: state.tx + dx, ty: state.ty + dy }, box)
+}
