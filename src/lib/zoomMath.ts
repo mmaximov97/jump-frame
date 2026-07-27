@@ -32,3 +32,36 @@ export function computeVideoBox(container: Size, intrinsic: Size): Box {
     height,
   }
 }
+
+export interface ZoomState {
+  scale: number
+  tx: number
+  ty: number
+}
+
+export const MIN_SCALE = 1
+export const MAX_SCALE = 8
+
+/**
+ * Clamping a negative value against a zero limit produces -0, which renders
+ * as "translate(-0px)" and compares unequal to 0 under Object.is.
+ */
+function withoutNegativeZero(n: number): number {
+  return n === 0 ? 0 : n
+}
+
+/**
+ * Keeps the zoomed video covering at least its own unzoomed box, so panning
+ * can never reveal a black gap at the edge. At 1x there is nothing to pan,
+ * so the offset collapses to zero.
+ */
+export function clampZoom(state: ZoomState, box: Box): ZoomState {
+  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, state.scale))
+  const maxTx = (box.width * (scale - 1)) / 2
+  const maxTy = (box.height * (scale - 1)) / 2
+  return {
+    scale,
+    tx: withoutNegativeZero(Math.min(maxTx, Math.max(-maxTx, state.tx))),
+    ty: withoutNegativeZero(Math.min(maxTy, Math.max(-maxTy, state.ty))),
+  }
+}
