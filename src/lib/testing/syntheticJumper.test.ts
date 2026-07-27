@@ -54,10 +54,12 @@ describe('generateJump', () => {
     const midAir = clip.frames.find(
       (f) => Math.abs(f.time - (clip.truth.takeoffTime + clip.truth.landingTime) / 2) < 1 / BASE.fps
     )!
-    // floors and footY are normalized (0..1) coordinates, so the margin below
-    // must be in the same units. The actual rise here is ~0.156 of frame
-    // height, so 0.01 (1% of frame height) is a generous but real threshold.
-    expect(footY(midAir.landmarks)).toBeLessThan(floors[0]! - 0.01)
+    // The com rises 0.5 m at 400 px/m on a 1280 px frame, so the feet must
+    // drop 0.5 * 400 / 1280 = 0.15625 in normalized units. midAir is the
+    // frame nearest the apex rather than the apex itself, hence the loose
+    // tolerance (a one-sided epsilon would pass a foot lift that's off by a
+    // stray factor of 2 or a bad unit conversion; this catches both).
+    expect(floors[0]! - footY(midAir.landmarks)).toBeCloseTo(0.15625, 1)
   })
 
   it('drives the body com along a parabola whose curvature encodes real gravity', () => {
@@ -75,7 +77,7 @@ describe('generateJump', () => {
 
   it('keeps the com on the same parabola when the legs tuck', () => {
     const plain = generateJump(BASE)
-    const tucked = generateJump({ ...BASE, tuckM: 0.25 })
+    const tucked = generateJump({ ...BASE, tuckM: 0.35 })
     const at = (clip: ReturnType<typeof generateJump>, t: number) =>
       centreOfMass(clip.frames.find((f) => f.time >= t)!.landmarks).y
     const t = (plain.truth.takeoffTime + plain.truth.landingTime) / 2
@@ -84,13 +86,17 @@ describe('generateJump', () => {
 
   it('pulls the hip midpoint OFF that parabola when the legs tuck', () => {
     const plain = generateJump(BASE)
-    const tucked = generateJump({ ...BASE, tuckM: 0.25 })
+    // tuckM matches Task 8's contrast test so the two stay comparable.
+    const tucked = generateJump({ ...BASE, tuckM: 0.35 })
     const hipAt = (clip: ReturnType<typeof generateJump>, t: number) => {
       const f = clip.frames.find((x) => x.time >= t)!
       return (f.landmarks[23]!.y + f.landmarks[24]!.y) / 2
     }
     const t = (plain.truth.takeoffTime + plain.truth.landingTime) / 2
-    expect(Math.abs(hipAt(tucked, t) - hipAt(plain, t))).toBeGreaterThan(0.01)
+    // Measured deviation at tuckM=0.35 is ~0.014476 (normalized units).
+    // Threshold of 0.008 leaves ~45% headroom above measured while still
+    // failing if the effect drops below ~55% of correct.
+    expect(Math.abs(hipAt(tucked, t) - hipAt(plain, t))).toBeGreaterThan(0.008)
   })
 
   it('is deterministic for a given seed and different for another', () => {
