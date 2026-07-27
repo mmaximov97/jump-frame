@@ -1,9 +1,24 @@
 import type { ComTrack } from './comTrack'
 
 export interface FlightPhase {
-  /** First airborne frame. */
+  /**
+   * The sub-frame-corrected takeoff boundary frame. This is usually, but not
+   * always, the first frame the coarse AIRBORNE_THRESHOLD_FRACTION test
+   * calls airborne — reclassification (see extendBoundary) can pull it one
+   * frame earlier (MAX_BOUNDARY_EXTENSION) when the threshold itself lagged
+   * the true takeoff. The one guarantee callers can rely on is
+   * `takeoffTime ∈ [times[takeoffFrame - 1], times[takeoffFrame]]` (or
+   * `takeoffTime === times[0]` when `takeoffFrame === 0`) — not that
+   * `floorY - footY[takeoffFrame] > threshold`.
+   */
   takeoffFrame: number
-  /** First frame back in contact after the airborne run. */
+  /**
+   * The sub-frame-corrected landing boundary frame. Symmetric to
+   * `takeoffFrame`: usually the first frame back below the coarse threshold
+   * after the airborne run, but reclassification can push it one frame
+   * later. Guarantee: `landingTime ∈ [times[landingFrame - 1],
+   * times[landingFrame]]`.
+   */
   landingFrame: number
   /** Sub-frame takeoff instant, seconds. */
   takeoffTime: number
@@ -22,14 +37,20 @@ const MAX_FLIGHT_SECONDS = 1.5
 const EDGE_FIT_FRAMES = 4
 /**
  * How many extra frames beyond the coarse threshold boundary get tested for
- * reclassification. AIRBORNE_THRESHOLD_FRACTION is sized against a typical
- * takeoff speed, so it costs roughly a frame's worth of real displacement
- * before a genuinely-airborne frame clears it — the boundary the threshold
- * finds can lag the true airborne/contact split by about a frame. Two frames
- * of headroom corrects that without reaching so far that a real contact
- * frame could ever be mistaken for flight.
+ * reclassification. This is a backstop on how far the walk may reach, not
+ * the thing that makes reclassification safe — closerToLineThanFloor's
+ * clearance guard is what actually stops it from ever pulling in a genuine
+ * contact frame (this cap alone does not: measured swallow and RMS numbers
+ * were identical between caps of 1, 2, 3 and 5 before that guard existed).
+ * With the guard in place, measured across 1200-clip sweeps at
+ * σ ∈ {0.001, 0.002, 0.004}: a cap of 1 tied a cap of 2 exactly wherever the
+ * second iteration never fired (σ ≤ 0.001), and strictly beat it wherever it
+ * did (σ = 0.002, 0.004 — lower RMS and fewer swallowed contact frames both
+ * times, because the second reclamation is fit from a shorter, noisier
+ * lever arm than the first). No case measured favoured 2 over 1, so the cap
+ * is 1: reclaim at most one frame per edge.
  */
-const MAX_BOUNDARY_EXTENSION = 2
+const MAX_BOUNDARY_EXTENSION = 1
 
 function percentile(values: number[], p: number): number {
   const sorted = [...values].sort((a, b) => a - b)
@@ -59,10 +80,22 @@ function fitLine(t: number[], y: number[]): { a: number; b: number } | null {
  * flight line than with sitting on the floor? Used to reclaim a boundary
  * frame that the coarse threshold missed — its displacement from the floor
  * was real but too small to clear AIRBORNE_THRESHOLD_FRACTION.
+ *
+ * The line-vs-floor comparison alone is not sufficient: solved for `y`, it
+ * accepts any clearance above zero once the fitted line's own clearance
+ * shrinks near the crossing (approaching takeoff/landing, "half the fitted
+ * gap" tends to zero), and it does not require `y` to be above the floor at
+ * all when the line's prediction sits below the floor. floorY is only the
+ * 90th percentile of footY, so roughly a tenth of genuinely standing frames
+ * sit below it by construction — exactly the frames this predicate must
+ * never reclaim. The clearance guard below is a hard, non-negotiable floor
+ * on real displacement, independent of the line fit, before the
+ * closer-to-line-than-floor comparison is even considered.
  */
 function closerToLineThanFloor(
-  y: number, floorY: number, line: { a: number; b: number }, t: number
+  y: number, floorY: number, line: { a: number; b: number }, t: number, threshold: number
 ): boolean {
+  if (!(floorY - y > 0.25 * threshold)) return false
   const predicted = line.a + line.b * t
   return Math.abs(y - predicted) < Math.abs(y - floorY)
 }
@@ -71,14 +104,14 @@ function closerToLineThanFloor(
  * Extends a run of airborne indices one frame at a time — backwards
  * (direction -1, the takeoff edge) or forwards (direction +1, the landing
  * edge) — while the next candidate frame is closer to the fitted flight line
- * than to the floor. `frontier` bounds how far the candidate may reach: for
- * the takeoff edge it's -1 (frame 0 is the lowest legal index); for the
- * landing edge it's `times.length` (a landing needs a contact frame after
- * the reclaimed run, so the candidate itself must stay short of the last
- * index).
+ * than to the floor (see closerToLineThanFloor's clearance guard). `frontier`
+ * bounds how far the candidate may reach: for the takeoff edge it's -1
+ * (frame 0 is the lowest legal index); for the landing edge it's
+ * `times.length - 1` (a landing needs a contact frame after the reclaimed
+ * run, so the candidate itself must stay short of the last index).
  */
 function extendBoundary(
-  times: number[], footY: number[], floorY: number,
+  times: number[], footY: number[], floorY: number, threshold: number,
   indices: number[], direction: -1 | 1, frontier: number
 ): number[] {
   let extended = indices
@@ -89,7 +122,7 @@ function extendBoundary(
     if (direction === -1 ? candidate <= frontier : candidate >= frontier) break
     const line = fitLine(extended.map((i) => times[i]!), extended.map((i) => footY[i]!))
     if (!line) break
-    if (!closerToLineThanFloor(footY[candidate]!, floorY, line, times[candidate]!)) break
+    if (!closerToLineThanFloor(footY[candidate]!, floorY, line, times[candidate]!, threshold)) break
     extended = direction === -1 ? [candidate, ...extended] : [...extended, candidate]
   }
   return extended
@@ -159,12 +192,27 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
   // The coarse threshold can lag the true takeoff/landing split by about a
   // frame (see MAX_BOUNDARY_EXTENSION); reclaim any adjacent frame that is
   // actually part of the flight before fitting and clamping.
-  const leadingExtended = extendBoundary(times, footY, floorY, leading, -1, -1)
-  const trailingExtended = extendBoundary(times, footY, floorY, trailing, 1, times.length - 1)
+  const leadingExtended = extendBoundary(times, footY, floorY, threshold, leading, -1, -1)
+  const trailingExtended = extendBoundary(times, footY, floorY, threshold, trailing, 1, times.length - 1)
 
   const finalTakeoffFrame = leadingExtended[0]!
   const finalLandingFrame = trailingExtended[trailingExtended.length - 1]! + 1
 
+  // Extension only ever pulls the takeoff boundary earlier and/or the
+  // landing boundary later, so it can only grow the reported duration
+  // relative to the coarse pre-extension run. MAX_FLIGHT_SECONDS must
+  // therefore be re-checked against what is actually reported: a coarse run
+  // measured just under the cap can be extended past it.
+  const finalDuration = times[finalLandingFrame]! - times[finalTakeoffFrame]!
+  if (finalDuration > MAX_FLIGHT_SECONDS) return null
+
+  // finalTakeoffFrame can reach 0 two different ways: the coarse run
+  // genuinely started on the clip's first frame (nothing to extrapolate
+  // from), or extension walked a reclaimed boundary all the way down to 0.
+  // Either way there is no frame -1 to fit a contact anchor from, so the
+  // sub-frame estimate is discarded in favour of times[0] — a wrongly
+  // reclaimed frame 0 therefore costs a full frame of precision, not a
+  // fraction of one.
   const takeoffTime = finalTakeoffFrame === 0
     ? times[0]!
     : crossingTime(times, footY, leadingExtended, floorY, times[finalTakeoffFrame]!,

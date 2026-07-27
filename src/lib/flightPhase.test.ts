@@ -64,6 +64,7 @@ describe('findFlightPhase', () => {
         })
         const phase = findFlightPhase(buildComTrack(clip.frames, { width: 720, height: 1280 }))!
         expect(Math.abs(phase.takeoffTime - clip.truth.takeoffTime)).toBeLessThan(1 / (3 * fps))
+        expect(Math.abs(phase.landingTime - clip.truth.landingTime)).toBeLessThan(1 / (3 * fps))
       }
     }
   })
@@ -72,5 +73,33 @@ describe('findFlightPhase', () => {
     const phase = findFlightPhase(track([60, 60, 60, 100, 100]))!
     expect(phase.takeoffFrame).toBe(0)
     expect(phase.takeoffTime).toBe(0)
+  })
+
+  it('extension reaches but never crosses the array boundary on either edge', () => {
+    // Takeoff edge: frame 0 sits exactly on the line fitted through frames
+    // 1-4 (a perfectly linear synthetic descent), so it is a legitimate
+    // reclassification target. The coarse run starts at frame 1; extension
+    // should walk it down to frame 0 and stop there — never attempting a
+    // frame -1. A frontier off by one in the restrictive direction (e.g. 0
+    // instead of -1) would refuse the reclassification and leave
+    // takeoffFrame at 1 instead of 0.
+    const leadingPhase = findFlightPhase(
+      track([92, 79, 66, 53, 40, 100, 100])
+    )!
+    expect(leadingPhase.takeoffFrame).toBe(0)
+    expect(leadingPhase.takeoffTime).toBe(0)
+
+    // Landing edge: frame 5 is the array's last frame and sits exactly on
+    // the line fitted through frames 1-4, so it looks reclaimable too — but
+    // there is no frame after it to serve as the reported landingFrame. The
+    // frontier must refuse to consume it. A frontier off by one in the
+    // permissive direction (times.length instead of times.length - 1) would
+    // let it through, pushing landingFrame to an out-of-bounds 6 and
+    // landingTime to NaN.
+    const trailingPhase = findFlightPhase(
+      track([100, 40, 53, 66, 79, 92])
+    )!
+    expect(trailingPhase.landingFrame).toBeLessThan(6)
+    expect(Number.isFinite(trailingPhase.landingTime)).toBe(true)
   })
 })
