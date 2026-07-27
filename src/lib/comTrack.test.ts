@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildComTrack } from './comTrack'
 import { generateJump } from './testing/syntheticJumper'
-import { LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from './poseTypes'
+import { FOOT_LANDMARKS, LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from './poseTypes'
 
 const VIDEO = { width: 720, height: 1280 }
 
@@ -52,5 +52,29 @@ describe('buildComTrack', () => {
     expect(track.comY).toEqual([])
     expect(track.footY).toEqual([])
     expect(track.staturePx).toBe(0)
+  })
+
+  it('resists the noise spike a plain maximum would latch onto', () => {
+    // footY is itself a max over six landmarks, so noise pushes spans upward.
+    // A plain Math.max then chases the largest spike; the 90th percentile does
+    // not. Compare the two against the value the generator actually encodes.
+    const truthPx = 1.8 * 400 * 0.936 / 0.9 // stature * scale * nose fraction / estimator divisor
+
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const clip = generateJump({
+        jumpHeightM: 0.5, scalePxPerM: 400, fps: 60,
+        videoWidth: VIDEO.width, videoHeight: VIDEO.height, statureM: 1.8,
+        noiseSigma: 0.01, seed,
+      })
+      const track = buildComTrack(clip.frames, VIDEO)
+
+      const spans = clip.frames.map((f) => {
+        const foot = Math.max(...FOOT_LANDMARKS.map((i) => f.landmarks[i]!.y * VIDEO.height))
+        return foot - f.landmarks[LM.NOSE]!.y * VIDEO.height
+      })
+      const naivePx = Math.max(...spans) / 0.9
+
+      expect(Math.abs(track.staturePx - truthPx)).toBeLessThan(Math.abs(naivePx - truthPx))
+    }
   })
 })

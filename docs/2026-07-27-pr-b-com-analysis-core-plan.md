@@ -748,6 +748,33 @@ describe('buildComTrack', () => {
     expect(track.staturePx / 400).toBeLessThan(2.0)
   })
 
+  // The test above cannot justify the percentile: with tuckM defaulting to 0
+  // the airborne pose is a rigid translation of the standing one, translation
+  // cancels in footY - noseY, and every span is identical. A zero-variance
+  // array makes percentile, max and every quantile the same number. This test
+  // makes the choice earn its place by beating the naive alternative outright.
+  it('resists the noise spike a plain maximum would latch onto', () => {
+    // footY is itself a max over six landmarks, so noise pushes spans upward.
+    const truthPx = (1.8 * 400 * 0.936) / 0.9 // stature * scale * nose fraction / divisor
+
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const clip = generateJump({
+        jumpHeightM: 0.5, scalePxPerM: 400, fps: 60,
+        videoWidth: VIDEO.width, videoHeight: VIDEO.height, statureM: 1.8,
+        noiseSigma: 0.01, seed,
+      })
+      const track = buildComTrack(clip.frames, VIDEO)
+
+      const spans = clip.frames.map((f) => {
+        const foot = Math.max(...FOOT_LANDMARKS.map((i) => f.landmarks[i]!.y * VIDEO.height))
+        return foot - f.landmarks[LM.NOSE]!.y * VIDEO.height
+      })
+      const naivePx = Math.max(...spans) / 0.9
+
+      expect(Math.abs(track.staturePx - truthPx)).toBeLessThan(Math.abs(naivePx - truthPx))
+    }
+  })
+
   it('returns empty arrays for an empty clip rather than throwing', () => {
     const track = buildComTrack([], VIDEO)
     expect(track.times).toEqual([])
@@ -784,8 +811,14 @@ export interface ComTrack {
 const NOSE_HEIGHT_FRACTION = 0.9
 
 /**
- * Which percentile of (foot - nose) counts as "standing upright". The person
- * is tallest fully extended; a plain maximum would latch onto a noise spike.
+ * Which percentile of (foot - nose) counts as "standing upright".
+ *
+ * The threat this guards against is noise, not the flight phase. Tucking the
+ * legs *lowers* foot - nose, and the largest span comes from the standing
+ * frames regardless, so airborne frames cannot inflate the estimate. What can
+ * is noise: footY is itself a maximum over six landmarks, so it is already
+ * biased upward, while the nose is a single sample. A plain maximum would
+ * chase the largest spike in the clip; a high percentile does not.
  */
 const STANDING_PERCENTILE = 0.9
 
@@ -827,7 +860,7 @@ export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
 - [ ] **Step 4: Убедиться, что тесты проходят**
 
 Run: `npm test`
-Expected: PASS. 36 + 5 новых = 41.
+Expected: PASS. 36 + 6 новых = 42.
 
 - [ ] **Step 5: Коммит**
 
@@ -1065,7 +1098,7 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
 - [ ] **Step 4: Убедиться, что тесты проходят**
 
 Run: `npm test`
-Expected: PASS. 41 + 8 новых = 49.
+Expected: PASS. 42 + 8 новых = 50.
 
 - [ ] **Step 5: Коммит**
 
@@ -1267,7 +1300,7 @@ export function fitParabola(times: number[], values: number[]): ParabolaFit | nu
 - [ ] **Step 4: Убедиться, что тесты проходят**
 
 Run: `npm test`
-Expected: PASS. 49 + 8 новых = 57.
+Expected: PASS. 50 + 8 новых = 58.
 
 - [ ] **Step 5: Коммит**
 
@@ -1438,7 +1471,7 @@ export function analyseJump(frames: PoseFrame[], video: VideoSize): JumpAnalysis
 - [ ] **Step 4: Убедиться, что тесты проходят**
 
 Run: `npm test`
-Expected: PASS. 57 + 8 новых = 65.
+Expected: PASS. 58 + 8 новых = 66.
 
 - [ ] **Step 5: Коммит**
 
@@ -1626,7 +1659,7 @@ export function measureJump(
 - [ ] **Step 4: Убедиться, что тесты проходят**
 
 Run: `npm test`
-Expected: PASS. 65 + 10 новых = 75.
+Expected: PASS. 66 + 10 новых = 76.
 
 - [ ] **Step 5: Коммит**
 
@@ -1770,7 +1803,7 @@ describe('acceptance: noise and failure modes', () => {
 - [ ] **Step 2: Запустить тесты**
 
 Run: `npm test`
-Expected: PASS. 75 + 11 новых = 86.
+Expected: PASS. 76 + 11 новых = 87.
 
 **Если какой-то приёмочный порог не проходит — не ослабляйте его молча.** Сообщите фактическое значение и статус `DONE_WITH_CONCERNS`. Пороги здесь взяты из спеки и означают обещания пользователю; если конвейер их не держит, это результат, а не помеха.
 
@@ -1799,7 +1832,7 @@ git commit -m "Add acceptance tests proving the pipeline on a known jump"
 
 ## Определение готовности
 
-- `npm test` — 86 тестов проходят
+- `npm test` — 87 тестов проходят
 - `npm run build` — без ошибок
 - `grep` из Task 8 Step 4 — пусто: ни Vue, ни DOM, ни недетерминированности в `src/lib/`
 - Высота восстанавливается в пределах 1 см при 30 и 60 fps, с поджатием ног и с шумом σ = 0.005
