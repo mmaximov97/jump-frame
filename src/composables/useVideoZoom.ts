@@ -14,6 +14,7 @@ import {
 const DOUBLE_TAP_SCALE = 3
 const DOUBLE_TAP_MS = 300
 const DOUBLE_TAP_SLOP_PX = 30
+const TAP_SLOP_PX = 5
 const WHEEL_SENSITIVITY = 0.002
 const KEY_ZOOM_FACTOR = 1.25
 
@@ -42,6 +43,7 @@ export function useVideoZoom(
   let pinchDistance = 0
   let pinchCentre: Point = { x: 0, y: 0 }
   let gestureMoved = false
+  let gestureStart: Point = { x: 0, y: 0 }
   let lastTapAt = 0
   let lastTapPoint: Point = { x: 0, y: 0 }
 
@@ -81,7 +83,10 @@ export function useVideoZoom(
   function onPointerDown(e: PointerEvent) {
     // The reset button lives inside the container; its taps are not gestures.
     if ((e.target as HTMLElement).closest('button')) return
-    if (pointers.size === 0) gestureMoved = false
+    if (pointers.size === 0) {
+      gestureMoved = false
+      gestureStart = localPoint(e)
+    }
     pointers.set(e.pointerId, localPoint(e))
     containerRef.value?.setPointerCapture(e.pointerId)
     if (pointers.size === 2) {
@@ -119,7 +124,7 @@ export function useVideoZoom(
 
     if (isZoomed.value) {
       e.preventDefault()
-      gestureMoved = true
+      if (distance(current, gestureStart) > TAP_SLOP_PX) gestureMoved = true
       state.value = panBy(state.value, box.value, current.x - previous.x, current.y - previous.y)
     }
   }
