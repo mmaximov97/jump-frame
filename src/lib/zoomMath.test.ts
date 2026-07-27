@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeVideoBox, clampZoom, MAX_SCALE, MIN_SCALE, panBy, zoomAbout } from './zoomMath'
+import { computeVideoBox, clampZoom, MAX_SCALE, MIN_SCALE, panBy, project, zoomAbout } from './zoomMath'
 
 describe('computeVideoBox', () => {
   it('leaves letterbox bars above and below a landscape clip', () => {
@@ -98,5 +98,31 @@ describe('panBy', () => {
 
   it('does nothing at 1x', () => {
     expect(panBy({ scale: 1, tx: 0, ty: 0 }, box, 50, 50)).toEqual({ scale: 1, tx: 0, ty: 0 })
+  })
+})
+
+describe('project', () => {
+  const box = { left: 0, top: 0, width: 400, height: 400 }
+
+  it('maps the frame centre to the box centre regardless of zoom', () => {
+    expect(project(0.5, 0.5, box, { scale: 1, tx: 0, ty: 0 })).toEqual({ x: 200, y: 200 })
+    expect(project(0.5, 0.5, box, { scale: 4, tx: 0, ty: 0 })).toEqual({ x: 200, y: 200 })
+  })
+
+  it('pushes the top-left corner off-screen when zoomed', () => {
+    expect(project(0, 0, box, { scale: 2, tx: 0, ty: 0 })).toEqual({ x: -200, y: -200 })
+  })
+
+  it('accounts for the pan offset', () => {
+    expect(project(0, 0, box, { scale: 2, tx: 50, ty: -30 })).toEqual({ x: -150, y: -230 })
+  })
+
+  it('agrees with zoomAbout: the landmark under the anchor stays under it', () => {
+    // At 1x, the landmark at nx = 0.75 sits at x = 300 — the anchor below.
+    const anchor = { x: 300, y: 200 }
+    const zoomed = zoomAbout({ scale: 1, tx: 0, ty: 0 }, box, anchor, 2)
+    const after = project(0.75, 0.5, box, zoomed)
+    expect(after.x).toBeCloseTo(anchor.x)
+    expect(after.y).toBeCloseTo(anchor.y)
   })
 })

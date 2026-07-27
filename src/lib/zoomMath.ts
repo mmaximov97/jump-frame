@@ -98,3 +98,22 @@ export function zoomAbout(state: ZoomState, box: Box, anchor: Point, factor: num
 export function panBy(state: ZoomState, box: Box, dx: number, dy: number): ZoomState {
   return clampZoom({ scale: state.scale, tx: state.tx + dx, ty: state.ty + dy }, box)
 }
+
+/**
+ * Normalized frame coordinates (0..1, as MediaPipe reports them) to pixels in
+ * the container's coordinate space, with the current zoom applied.
+ *
+ * The pose overlay canvas deliberately sits outside the CSS transform — a
+ * canvas inside it would have its bitmap stretched and the skeleton would go
+ * blurry. Instead the points travel through this matrix by hand.
+ */
+export function project(nx: number, ny: number, box: Box, state: ZoomState): Point {
+  const cx = box.left + box.width / 2
+  const cy = box.top + box.height / 2
+  const bx = box.left + nx * box.width
+  const by = box.top + ny * box.height
+  return {
+    x: cx + (bx - cx) * state.scale + state.tx,
+    y: cy + (by - cy) * state.scale + state.ty,
+  }
+}
