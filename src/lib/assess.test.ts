@@ -32,6 +32,26 @@ describe('assess', () => {
     expect(assess({ ...GOOD, rSquared: 0.94 }).kind).toBe('unusable')
   })
 
+  it('treats rSquared exactly at the unusable cutoff as usable (warn, not unusable)', () => {
+    // MIN_USABLE_R_SQUARED is 0.95 and the guard is `<`, so 0.95 itself must
+    // not fire it. It falls through to the MIN_CLEAN_R_SQUARED check next
+    // (0.95 < 0.99), which does fire, so the expected result is 'warn', not
+    // 'ok' — computed by hand: { kind: 'warn', heightCm: 50 }.
+    expect(assess({ ...GOOD, rSquared: 0.95 })).toEqual({
+      kind: 'warn',
+      heightCm: 50,
+      message: 'Трекинг местами срывался — цифра приблизительная.',
+    })
+  })
+
+  it('treats rSquared exactly at the clean cutoff as clean (ok, not warn)', () => {
+    // MIN_CLEAN_R_SQUARED is 0.99 and that guard is also `<`, so 0.99 itself
+    // must not fire it. GOOD's method disagreement is |50-52|/50 = 0.04,
+    // under the 0.2 cutoff, so the expected result is 'ok' — computed by
+    // hand: { kind: 'ok', heightCm: 50 }.
+    expect(assess({ ...GOOD, rSquared: 0.99 })).toEqual({ kind: 'ok', heightCm: 50 })
+  })
+
   it('rejects an implausible stature and blames slow motion', () => {
     const tall = assess({ ...GOOD, statureM: 7.2 })
     expect(tall.kind).toBe('unusable')
@@ -52,10 +72,27 @@ describe('assess', () => {
     expect(assess({ ...GOOD, flightTimeHeightCm: 59 }).kind).toBe('ok')
   })
 
-  it('lets the earlier check win when several fire at once', () => {
-    // A bad stature AND a bad fit: the stature message must be the one shown.
-    const verdict = assess({ ...GOOD, statureM: 7.2, rSquared: 0.96 })
-    expect(verdict.kind).toBe('unusable')
+  it('lets the earlier check win when two unusable-tier guards both fire', () => {
+    // Both cases pair a bad stature (7.2m, itself enough to fail on its own)
+    // with a second condition that ALSO fails at the unusable tier, so the
+    // check that runs first is the only way to tell them apart. Asserting on
+    // `kind` alone can't do that — both are 'unusable' either way — so this
+    // asserts the message, which is check-specific.
+
+    // flightFrames (5, < 8) is checked before statureM, so its message wins.
+    // Computed by hand: { kind: 'unusable', message: 'Слишком короткий полёт для анализа.' }
+    expect(assess({ ...GOOD, flightFrames: 5, statureM: 7.2 })).toEqual({
+      kind: 'unusable',
+      message: 'Слишком короткий полёт для анализа.',
+    })
+
+    // rSquared < 0.95 (here 0.5) is checked before statureM, so its message
+    // wins. Computed by hand:
+    // { kind: 'unusable', message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.' }
+    expect(assess({ ...GOOD, rSquared: 0.5, statureM: 7.2 })).toEqual({
+      kind: 'unusable',
+      message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.',
+    })
   })
 })
 

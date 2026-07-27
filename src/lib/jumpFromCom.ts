@@ -108,6 +108,13 @@ export function assess(m: QualityMetrics): Verdict {
   // A scale error is always a factor of k squared, so at least fourfold. The
   // band is wide on purpose: it should never fire on a short teenager, only
   // on a timebase that is flatly wrong.
+  //
+  // This is `unusable`, not `warn`, and that is deliberate, not an oversight:
+  // when the scale is wrong, BOTH comHeightCm and flightTimeHeightCm are
+  // wrong by that same k² factor — there is no reading of this measurement
+  // that is approximately right. "180 cm, but be careful" implies the number
+  // is in the right neighbourhood; here it never is, so a caveat would
+  // undersell how wrong it is. Showing nothing is the honest option.
   if (m.statureM < MIN_STATURE_M || m.statureM > MAX_STATURE_M) {
     return { kind: 'unusable', message: 'Похоже, видео в замедленной съёмке — результат недостоверен.' }
   }
