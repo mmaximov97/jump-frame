@@ -382,7 +382,12 @@ describe('generateJump', () => {
     const midAir = clip.frames.find(
       (f) => Math.abs(f.time - (clip.truth.takeoffTime + clip.truth.landingTime) / 2) < 1 / BASE.fps
     )!
-    expect(footY(midAir.landmarks)).toBeLessThan(floors[0]! - 1)
+    // The com rises 0.5 m at 400 px/m on a 1280 px frame, so the feet must drop
+    // 0.5 * 400 / 1280 = 0.15625 — normalized units, the same ones footY is in.
+    // Two-sided on purpose: a one-sided epsilon would wave through a generator
+    // that lifts the feet a third as far as it should. midAir is the frame
+    // nearest the apex rather than the apex itself, hence the tolerance.
+    expect(floors[0]! - footY(midAir.landmarks)).toBeCloseTo(0.15625, 1)
   })
 
   it('drives the body com along a parabola whose curvature encodes real gravity', () => {
@@ -400,7 +405,7 @@ describe('generateJump', () => {
 
   it('keeps the com on the same parabola when the legs tuck', () => {
     const plain = generateJump(BASE)
-    const tucked = generateJump({ ...BASE, tuckM: 0.25 })
+    const tucked = generateJump({ ...BASE, tuckM: 0.35 })
     const at = (clip: ReturnType<typeof generateJump>, t: number) =>
       centreOfMass(clip.frames.find((f) => f.time >= t)!.landmarks).y
     const t = (plain.truth.takeoffTime + plain.truth.landingTime) / 2
@@ -409,13 +414,19 @@ describe('generateJump', () => {
 
   it('pulls the hip midpoint OFF that parabola when the legs tuck', () => {
     const plain = generateJump(BASE)
-    const tucked = generateJump({ ...BASE, tuckM: 0.25 })
+    const tucked = generateJump({ ...BASE, tuckM: 0.35 })
     const hipAt = (clip: ReturnType<typeof generateJump>, t: number) => {
       const f = clip.frames.find((x) => x.time >= t)!
       return (f.landmarks[23]!.y + f.landmarks[24]!.y) / 2
     }
     const t = (plain.truth.takeoffTime + plain.truth.landingTime) / 2
-    expect(Math.abs(hipAt(tucked, t) - hipAt(plain, t))).toBeGreaterThan(0.01)
+    // This test and its twin above justify the whole segment-mass model, so the
+    // threshold must have real headroom. Measured deviation at tuckM 0.25 was
+    // 0.010340 against a 0.01 bar — a 3.4% margin that neither survived a
+    // legitimate tweak nor failed on a generator 3% short. At tuckM 0.35 the
+    // deviation is about 0.0145, so 0.008 leaves ~45% while still failing if
+    // the effect drops below roughly half. tuckM matches Task 8's contrast test.
+    expect(Math.abs(hipAt(tucked, t) - hipAt(plain, t))).toBeGreaterThan(0.008)
   })
 
   it('is deterministic for a given seed and different for another', () => {
