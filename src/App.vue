@@ -80,6 +80,7 @@ const hasAnyMarker = computed(
 )
 
 const resultsAnchor = ref<HTMLElement | null>(null)
+const videoPlayer = ref<InstanceType<typeof VideoPlayer> | null>(null)
 
 watch(hasValidMarkers, (valid) => {
   if (!valid) return
@@ -169,6 +170,12 @@ function onKeydown(e: KeyboardEvent) {
   } else if (e.key === 'ArrowRight') {
     e.preventDefault()
     stepForward()
+  } else if (e.key === '+' || e.key === '=') {
+    e.preventDefault()
+    videoPlayer.value?.zoomIn()
+  } else if (e.key === '-' || e.key === '_') {
+    e.preventDefault()
+    videoPlayer.value?.zoomOut()
   }
 }
 
@@ -258,7 +265,7 @@ onUnmounted(() => {
       <div class="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
         <!-- Video + playback controls -->
         <div class="flex-1 min-h-0 flex flex-col">
-          <VideoPlayer :src="videoSrc" @video-ref="setVideoRef" />
+          <VideoPlayer ref="videoPlayer" :src="videoSrc" @video-ref="setVideoRef" />
           <Timeline
             v-if="isVideoLoaded"
             :duration="duration"
