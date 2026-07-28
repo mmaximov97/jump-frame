@@ -1,4 +1,4 @@
-import { onUnmounted, ref, type Ref } from 'vue'
+import { onUnmounted, ref, watch, type Ref } from 'vue'
 import {
   FilesetResolver,
   PoseLandmarker,
@@ -19,9 +19,14 @@ const COARSE_AIRBORNE_FRACTION = 0.02
 /**
  * How long a single seek may go without a presented frame before it is
  * treated as stuck. `requestVideoFrameCallback` can simply never fire — a
- * seek past the end, a decode failure that raises no `error` event, a
- * backgrounded tab — and without a timeout that hangs the whole scan with no
- * diagnostic and a cancel button that does nothing about it.
+ * seek past the end, or a decode failure that raises no `error` event — and
+ * without a timeout that hangs the whole scan with no diagnostic and a
+ * cancel button that does nothing about it.
+ *
+ * This does NOT reliably cover a backgrounded tab: browsers clamp or fully
+ * suspend timers (and video decode) for hidden tabs, so this timer can
+ * itself fire much later than 5 s, or not until the tab is foregrounded
+ * again. It only guards the foregrounded case.
  */
 const SEEK_TIMEOUT_MS = 5000
 
@@ -42,15 +47,27 @@ export function usePoseDetection(
   const frames = ref<PoseFrame[]>([])
 
   let landmarker: PoseLandmarker | null = null
+  // The in-flight load, memoised separately from the finished model: two
+  // overlapping run() calls before the first load finishes must share one
+  // `createFromOptions` call, not each start their own and leak the loser.
+  let loadingModel: Promise<PoseLandmarker> | null = null
   let abort: AbortController | null = null
   // Set once, on unmount. Distinct from `abort`: a plain cancel() re-uses the
   // same run's controller (just aborted), but disposal must permanently shut
   // the whole composable down — no run started before or after it may ever
   // touch `status`/`result`/etc. again.
   let disposed = false
+  // The video's position/play state from the moment the composable was last
+  // idle, captured once per idle→busy transition rather than once per run —
+  // see `run()`'s comment at the capture site for why.
+  let savedVideoState: { time: number; wasPaused: boolean } | null = null
 
-  async function loadModel(): Promise<PoseLandmarker> {
-    if (landmarker) return landmarker
+  /**
+   * Creates a fresh `PoseLandmarker`, falling back from GPU to CPU delegate.
+   * Closes it again, unused, if the composable was disposed while this was
+   * in flight — `onUnmounted` only runs once, so nothing else ever would.
+   */
+  async function createLandmarker(): Promise<PoseLandmarker> {
     const vision = await FilesetResolver.forVisionTasks(`${ASSETS}/wasm`)
     const baseOptions = { modelAssetPath: `${ASSETS}/pose_landmarker_lite.task` }
     let created: PoseLandmarker
@@ -70,14 +87,31 @@ export function usePoseDetection(
       })
     }
     if (disposed) {
-      // The component unmounted while the model was still loading. Nothing
-      // else will ever close this instance — onUnmounted already ran and
-      // fires only once — so it must happen right here or it leaks.
       created.close()
       throw new DOMException('cancelled', 'AbortError')
     }
     landmarker = created
     return landmarker
+  }
+
+  /**
+   * Loads the model once and caches it for the composable's lifetime.
+   * Memoises the in-flight *promise*, not just the finished result — without
+   * that, two overlapping run() calls each start their own
+   * `createFromOptions` before the first resolves, and only one of the two
+   * resulting instances ever gets referenced again, leaking the other's WASM
+   * heap and GPU context for the page's lifetime. Cleared again once the
+   * load settles, success or failure, so a rejected load does not poison
+   * every later attempt.
+   */
+  async function loadModel(): Promise<PoseLandmarker> {
+    if (landmarker) return landmarker
+    if (!loadingModel) {
+      loadingModel = createLandmarker().finally(() => {
+        loadingModel = null
+      })
+    }
+    return loadingModel
   }
 
   /**
@@ -138,6 +172,10 @@ export function usePoseDetection(
     for (let i = 0; i < times.length; i++) {
       if (signal.aborted || !isCurrent()) throw new DOMException('cancelled', 'AbortError')
       const mediaTime = await seekAndShow(video, times[i]!, signal)
+      // Re-check right here, not just at the top of the loop: the await
+      // above is exactly the window where a supersede, a disposal (which
+      // closes the detector), or a video swap can land.
+      if (signal.aborted || !isCurrent()) throw new DOMException('cancelled', 'AbortError')
       const frame = toPoseFrame(mediaTime, detector.detect(video))
       if (frame) collected.push(frame)
       if (isCurrent()) onProgress(i + 1)
@@ -163,6 +201,12 @@ export function usePoseDetection(
     const floor = sorted[Math.min(sorted.length - 1, Math.round(0.9 * (sorted.length - 1)))]!
     const noseY = coarse.map((f) => f.landmarks[LM.NOSE]!.y)
     const stature = Math.max(...footY.map((y, i) => y - noseY[i]!))
+    // A degenerate detection (nose at or below foot level in every frame)
+    // sends the threshold to zero or negative, which then reads nearly every
+    // sample as airborne — measured: 50 of 50 fine-pass seeks, roughly six
+    // times the detector calls, before the pipeline downstream correctly
+    // refuses the result anyway. Refuse to flag anything here instead.
+    if (!(stature > 0)) return []
     const threshold = COARSE_AIRBORNE_FRACTION * stature
     const indices: number[] = []
     for (let i = 0; i < footY.length; i++) {
@@ -193,28 +237,39 @@ export function usePoseDetection(
     if (disposed) return
 
     const video = videoRef.value
-    if (!video || !(video.duration > 0)) {
-      error.value = 'Видео не готово'
-      status.value = 'error'
-      return
-    }
-    if (!('requestVideoFrameCallback' in video)) {
-      error.value = 'Браузер не поддерживает покадровое чтение видео'
-      status.value = 'error'
-      return
-    }
 
     abort?.abort()
     const myAbort = new AbortController()
     abort = myAbort
     const signal = myAbort.signal
-    // True only while this call is both the composable's current run (not
-    // superseded by a later run()) and the composable itself hasn't been
-    // disposed. Every write to shared state after an `await` must go through
-    // this — otherwise a stale run's completion can clobber a newer run's
-    // status, or worse, move the video out from under a newer run's own
-    // seeking.
-    const isCurrent = () => !disposed && abort === myAbort
+    // True only while this call is the composable's current run: not
+    // superseded by a later run(), not disposed, and still pointed at the
+    // same video element it started with. Every write to shared state must
+    // go through this — otherwise a stale run's completion can clobber a
+    // newer run's status, move the video out from under a newer run's own
+    // seeking, or publish a result for a clip the caller has already
+    // replaced.
+    const isCurrent = () => !disposed && abort === myAbort && videoRef.value === video
+
+    if (!video || !(Number.isFinite(video.duration) && video.duration > 0)) {
+      // `duration` reads `Infinity` for a freshly recorded MediaRecorder
+      // WebM in Chrome until the file has been seeked to the end at least
+      // once. `planCoarsePass`'s loop would never terminate against that,
+      // and — being synchronous — that hang is unreachable by cancel(), the
+      // abort signal, or the seek timeout. Refuse it outright.
+      if (isCurrent()) {
+        error.value = 'Видео не готово'
+        status.value = 'error'
+      }
+      return
+    }
+    if (!('requestVideoFrameCallback' in video)) {
+      if (isCurrent()) {
+        error.value = 'Браузер не поддерживает покадровое чтение видео'
+        status.value = 'error'
+      }
+      return
+    }
 
     error.value = null
     result.value = null
@@ -223,8 +278,15 @@ export function usePoseDetection(
     progress.value = 0
     status.value = 'loading'
 
-    const wasPaused = video.paused
-    const originalTime = video.currentTime
+    // Captured once per idle→busy transition, not once per run(): a second
+    // run() that supersedes a first must restore the position the user was
+    // actually at before either run touched the video, not the first run's
+    // already-paused, already-seeked position. Cleared again in `finally`,
+    // by whichever run is current when the chain finally ends — and by the
+    // videoRef watcher below if the video itself changes mid-chain.
+    if (savedVideoState === null) {
+      savedVideoState = { time: video.currentTime, wasPaused: video.paused }
+    }
 
     try {
       const detector = await loadModel()
@@ -265,15 +327,44 @@ export function usePoseDetection(
       }
     } finally {
       if (isCurrent()) {
-        video.currentTime = originalTime
-        if (!wasPaused) void video.play()
+        const saved = savedVideoState
+        savedVideoState = null
+        if (saved) {
+          video.currentTime = saved.time
+          if (!saved.wasPaused) {
+            video.play().catch(() => {
+              // Autoplay can be refused outside a user gesture
+              // (NotAllowedError). There's nothing more to do about it here.
+            })
+          }
+        }
       }
     }
   }
 
   function cancel(): void {
+    // The abort signal cannot interrupt a model download already in flight —
+    // the MediaPipe loader takes no signal — so without this, cancelling
+    // during 'loading' would leave the status on 'loading' until the
+    // download finishes on its own. This makes the UI reflect the
+    // cancellation immediately; the run's own completion, once it notices
+    // the abort, writes the same value again.
+    if (!disposed && (status.value === 'loading' || status.value === 'scanning')) {
+      status.value = 'cancelled'
+    }
     abort?.abort()
   }
+
+  // A different (or cleared) video element means whatever run is in flight
+  // is scanning a clip the caller has already discarded. Abort immediately —
+  // the abort signal unblocks a wedged seek in the same tick — rather than
+  // letting the loop grind through its remaining, now-pointless samples.
+  // Also drop any saved restore state: it belongs to the old video, and the
+  // next run() (on whatever video is current now) must capture its own.
+  watch(videoRef, () => {
+    abort?.abort()
+    savedVideoState = null
+  }, { flush: 'sync' })
 
   onUnmounted(() => {
     disposed = true
