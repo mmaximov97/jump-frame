@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { onUnmounted, ref, type Ref } from 'vue'
 import {
   FilesetResolver,
   PoseLandmarker,
@@ -15,6 +15,15 @@ const ASSETS = `${import.meta.env.BASE_URL}mediapipe`
 
 /** A foot this far above the clip's floor level counts as airborne. */
 const COARSE_AIRBORNE_FRACTION = 0.02
+
+/**
+ * How long a single seek may go without a presented frame before it is
+ * treated as stuck. `requestVideoFrameCallback` can simply never fire — a
+ * seek past the end, a decode failure that raises no `error` event, a
+ * backgrounded tab — and without a timeout that hangs the whole scan with no
+ * diagnostic and a cancel button that does nothing about it.
+ */
+const SEEK_TIMEOUT_MS = 5000
 
 /**
  * `fps` is only used to schedule which instants to sample. The measurement
@@ -34,13 +43,19 @@ export function usePoseDetection(
 
   let landmarker: PoseLandmarker | null = null
   let abort: AbortController | null = null
+  // Set once, on unmount. Distinct from `abort`: a plain cancel() re-uses the
+  // same run's controller (just aborted), but disposal must permanently shut
+  // the whole composable down — no run started before or after it may ever
+  // touch `status`/`result`/etc. again.
+  let disposed = false
 
   async function loadModel(): Promise<PoseLandmarker> {
     if (landmarker) return landmarker
     const vision = await FilesetResolver.forVisionTasks(`${ASSETS}/wasm`)
     const baseOptions = { modelAssetPath: `${ASSETS}/pose_landmarker_lite.task` }
+    let created: PoseLandmarker
     try {
-      landmarker = await PoseLandmarker.createFromOptions(vision, {
+      created = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: { ...baseOptions, delegate: 'GPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
@@ -48,12 +63,20 @@ export function usePoseDetection(
     } catch {
       // Some browsers and older GPUs reject the WebGL delegate. CPU is slower
       // but always available, and the arithmetic is identical either way.
-      landmarker = await PoseLandmarker.createFromOptions(vision, {
+      created = await PoseLandmarker.createFromOptions(vision, {
         baseOptions: { ...baseOptions, delegate: 'CPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
       })
     }
+    if (disposed) {
+      // The component unmounted while the model was still loading. Nothing
+      // else will ever close this instance — onUnmounted already ran and
+      // fires only once — so it must happen right here or it leaks.
+      created.close()
+      throw new DOMException('cancelled', 'AbortError')
+    }
+    landmarker = created
     return landmarker
   }
 
@@ -61,21 +84,40 @@ export function usePoseDetection(
    * Seeks, waits for the frame to actually be presented, and returns its true
    * presentation time. `seeked` alone only says the position moved — the new
    * picture may not be painted yet, and detecting then reads the old one.
+   *
+   * Settles three ways: the frame is presented, `signal` aborts, or
+   * `SEEK_TIMEOUT_MS` elapses with neither. Listeners and the timer are torn
+   * down on every exit path so a settled call never fires twice.
    */
-  function seekAndShow(video: HTMLVideoElement, time: number): Promise<number> {
+  function seekAndShow(video: HTMLVideoElement, time: number, signal: AbortSignal): Promise<number> {
     return new Promise((resolve, reject) => {
-      let settled = false
-      const onError = () => {
-        if (settled) return
-        settled = true
-        reject(new Error(`seek failed at ${time.toFixed(3)}s`))
+      if (signal.aborted) {
+        reject(new DOMException('cancelled', 'AbortError'))
+        return
       }
-      video.addEventListener('error', onError, { once: true })
-      video.requestVideoFrameCallback((_now, metadata) => {
+
+      let settled = false
+      let rvfcHandle: number | null = null
+
+      const finish = (fn: () => void) => {
         if (settled) return
         settled = true
         video.removeEventListener('error', onError)
-        resolve(metadata.mediaTime)
+        signal.removeEventListener('abort', onAbort)
+        clearTimeout(timeoutId)
+        if (rvfcHandle !== null) video.cancelVideoFrameCallback(rvfcHandle)
+        fn()
+      }
+      const onError = () => finish(() => reject(new Error(`seek failed at ${time.toFixed(3)}s`)))
+      const onAbort = () => finish(() => reject(new DOMException('cancelled', 'AbortError')))
+      const timeoutId = setTimeout(() => {
+        finish(() => reject(new Error(`video stopped responding while seeking to ${time.toFixed(3)}s (timed out after ${SEEK_TIMEOUT_MS}ms)`)))
+      }, SEEK_TIMEOUT_MS)
+
+      video.addEventListener('error', onError, { once: true })
+      signal.addEventListener('abort', onAbort, { once: true })
+      rvfcHandle = video.requestVideoFrameCallback((_now, metadata) => {
+        finish(() => resolve(metadata.mediaTime))
       })
       video.currentTime = time
     })
@@ -90,15 +132,15 @@ export function usePoseDetection(
 
   async function scan(
     video: HTMLVideoElement, detector: PoseLandmarker, times: number[],
-    signal: AbortSignal, onProgress: (done: number) => void
+    signal: AbortSignal, isCurrent: () => boolean, onProgress: (done: number) => void
   ): Promise<PoseFrame[]> {
     const collected: PoseFrame[] = []
     for (let i = 0; i < times.length; i++) {
-      if (signal.aborted) throw new DOMException('cancelled', 'AbortError')
-      const mediaTime = await seekAndShow(video, times[i]!)
+      if (signal.aborted || !isCurrent()) throw new DOMException('cancelled', 'AbortError')
+      const mediaTime = await seekAndShow(video, times[i]!, signal)
       const frame = toPoseFrame(mediaTime, detector.detect(video))
       if (frame) collected.push(frame)
-      onProgress(i + 1)
+      if (isCurrent()) onProgress(i + 1)
     }
     return collected
   }
@@ -148,6 +190,8 @@ export function usePoseDetection(
   }
 
   async function run(): Promise<void> {
+    if (disposed) return
+
     const video = videoRef.value
     if (!video || !(video.duration > 0)) {
       error.value = 'Видео не готово'
@@ -161,8 +205,16 @@ export function usePoseDetection(
     }
 
     abort?.abort()
-    abort = new AbortController()
-    const signal = abort.signal
+    const myAbort = new AbortController()
+    abort = myAbort
+    const signal = myAbort.signal
+    // True only while this call is both the composable's current run (not
+    // superseded by a later run()) and the composable itself hasn't been
+    // disposed. Every write to shared state after an `await` must go through
+    // this — otherwise a stale run's completion can clobber a newer run's
+    // status, or worse, move the video out from under a newer run's own
+    // seeking.
+    const isCurrent = () => !disposed && abort === myAbort
 
     error.value = null
     result.value = null
@@ -176,6 +228,7 @@ export function usePoseDetection(
 
     try {
       const detector = await loadModel()
+      if (!isCurrent()) return
       if (signal.aborted) throw new DOMException('cancelled', 'AbortError')
 
       video.pause()
@@ -183,16 +236,18 @@ export function usePoseDetection(
 
       const rate = fps.value > 0 ? fps.value : 60
       const coarseTimes = planCoarsePass(video.duration, rate)
-      const coarse = await scan(video, detector, coarseTimes, signal, (done) => {
+      const coarse = await scan(video, detector, coarseTimes, signal, isCurrent, (done) => {
         progress.value = (done / coarseTimes.length) * 0.5
       })
 
       const fineTimes = planFinePass(coarseTimes, airborneIndices(coarse), video.duration, rate)
       const fine = fineTimes.length === 0
         ? []
-        : await scan(video, detector, fineTimes, signal, (done) => {
+        : await scan(video, detector, fineTimes, signal, isCurrent, (done) => {
             progress.value = 0.5 + (done / fineTimes.length) * 0.5
           })
+
+      if (!isCurrent()) return
 
       const all = dedupeByTime([...coarse, ...fine].sort((a, b) => a.time - b.time))
       frames.value = all
@@ -201,6 +256,7 @@ export function usePoseDetection(
       progress.value = 1
       status.value = 'done'
     } catch (caught) {
+      if (!isCurrent()) return
       if (caught instanceof DOMException && caught.name === 'AbortError') {
         status.value = 'cancelled'
       } else {
@@ -208,14 +264,23 @@ export function usePoseDetection(
         status.value = 'error'
       }
     } finally {
-      video.currentTime = originalTime
-      if (!wasPaused) void video.play()
+      if (isCurrent()) {
+        video.currentTime = originalTime
+        if (!wasPaused) void video.play()
+      }
     }
   }
 
   function cancel(): void {
     abort?.abort()
   }
+
+  onUnmounted(() => {
+    disposed = true
+    abort?.abort()
+    landmarker?.close()
+    landmarker = null
+  })
 
   return { status, progress, error, result, scatter, frames, run, cancel }
 }
