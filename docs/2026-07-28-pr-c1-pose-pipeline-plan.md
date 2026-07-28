@@ -865,7 +865,7 @@ const pose = usePoseDetection(videoRef, fps)
 
   <div v-else class="space-y-2">
     <p class="text-slate-400">
-      {{ pose.status.value === 'loading' ? 'Загружаем модель (~9 МБ)…' : 'Разбираем кадры…' }}
+      {{ pose.status.value === 'loading' ? 'Загружаем модель (~8 МБ)…' : 'Разбираем кадры…' }}
     </p>
     <div class="h-1.5 rounded-full bg-surface-lighter overflow-hidden">
       <div class="h-full bg-brand transition-all"
