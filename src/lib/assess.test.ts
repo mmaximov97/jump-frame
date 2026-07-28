@@ -122,31 +122,51 @@ describe('measureJump', () => {
 // rSquared < 0.95 kills bad fits under heavy noise, and the stature band
 // kills absurd scales.
 //
-// A sweep of 60,000 synthetic clips (jumpHeightM 0.01-0.5m, fps 24-120,
-// noiseSigma 0-0.01, tuckM 0-0.3, 10 seeds, 5 takeoff phases) found 1,087
-// cases where analyseJump reported a height more than 3x the generated
-// truth. Every single one was caught by assess() as 'unusable' — none came
-// back 'ok' or 'warn'. The closest call in that sweep is pinned below; the
-// second test re-runs a smaller slice of the same grid so a future change
-// that lets a pathological case slip through fails loudly.
+// Task 7's original sweep (60,000 synthetic clips: jumpHeightM 0.01-0.5m,
+// fps 24-120, noiseSigma 0-0.01, tuckM 0-0.3, 10 seeds, 5 takeoff phases)
+// found 1,087 cases where analyseJump reported a height more than 3x the
+// generated truth. Every single one was caught by assess() as 'unusable' —
+// none came back 'ok' or 'warn'. The closest call in that sweep was pinned
+// as the fixture below.
+//
+// Two later, independently diagnosed fixes changed the pipeline's accuracy
+// enough to move that fixture off its edge: flightPhase's sub-frame
+// crossing went from a linear fit to a quadratic one, and comTrack's footY
+// went from a maximum over six landmarks to their median. Under the current
+// pipeline the original scenario no longer overshoots by 3x (it now
+// measures 1.22x, comfortably non-pathological) and the fixture stopped
+// exercising anything. Re-swept the same-shaped grid, 91,000 scenarios,
+// against the current pipeline: 646 pathological cases (down from 1,087,
+// consistent with the fixes), still zero survivors. A local refinement
+// around the tightest continuous-guard margin found (~500 more scenarios,
+// narrowing jumpHeightM/noiseSigma/tuckM/takeoffPhase around the region
+// that produced it) narrowed the margin further; the new closest call is
+// pinned below. The second test re-runs a smaller slice of the same grid so
+// a future change that lets a pathological case slip through fails loudly;
+// it needed no changes, since it re-derives its own grid fresh each run.
 describe('assess catches the parabola-extrapolation failure mode (Task 6)', () => {
   it('does not pass the closest near-miss found by the sweep', () => {
-    // jumpHeightM 0.08, fps 24, noiseSigma 0.01, tuckM 0.1, seed 10,
-    // takeoffPhase 0.7: analyseJump's rSquared comes out 0.949480..., just
-    // 0.00052 below the 0.95 cutoff — the closest any pathological case in
-    // the sweep came to slipping past a guard. Reported height 25.14cm
-    // against an 8cm truth (3.14x). Caught anyway: statureM comes out 2.83,
-    // outside the 1.3-2.2 band, so even a hair's shift in rSquared would
-    // still be caught downstream.
+    // jumpHeightM 0.18, fps 25, noiseSigma 0.01, tuckM 0, seed 4,
+    // takeoffPhase 0.6: analyseJump's rSquared comes out 0.910239..., 0.0398
+    // below the 0.95 cutoff — the closest any pathological case in the
+    // re-swept grid came to slipping past this guard. That margin is wider
+    // than the original fixture's 0.00052, consistent with the two accuracy
+    // fixes making pathological cases less marginal generally, not just
+    // less frequent (646 pathological here vs 1,087 before, across
+    // comparably-sized grids). Reported height 55.54cm against an 18cm
+    // truth (3.09x). Caught anyway: statureM comes out 3.297, outside the
+    // 1.3-2.2 band, so even a hair's shift in rSquared would still be
+    // caught downstream — the same double-guard property the original
+    // fixture had.
     const clip = generateJump({
-      jumpHeightM: 0.08, scalePxPerM: 400, fps: 24,
+      jumpHeightM: 0.18, scalePxPerM: 400, fps: 25,
       videoWidth: VIDEO.width, videoHeight: VIDEO.height,
-      noiseSigma: 0.01, tuckM: 0.1, seed: 10, takeoffPhase: 0.7,
+      noiseSigma: 0.01, tuckM: 0, seed: 4, takeoffPhase: 0.6,
     })
     const result = analyseJump(clip.frames, VIDEO)
     expect(result).not.toBeNull()
     const analysis = result!
-    expect(analysis.comHeightCm).toBeGreaterThan(3 * 8)
+    expect(analysis.comHeightCm).toBeGreaterThan(3 * 18)
     expect(assess(analysis).kind).toBe('unusable')
   })
 
