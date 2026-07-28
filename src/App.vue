@@ -8,6 +8,7 @@ import { useMarkers } from './composables/useMarkers'
 import { useJumpCalculation, cmToUnit, unitLabel } from './composables/useJumpCalculation'
 import { useJumpHistory } from './composables/useJumpHistory'
 import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
+import { usePoseDetection } from './composables/usePoseDetection'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
 import Timeline from './components/Timeline.vue'
@@ -75,6 +76,8 @@ const {
   setUnit,
 } = useJumpCalculation(takeoffTime, landingTime, fps)
 
+const pose = usePoseDetection(videoRef, fps)
+
 const hasAnyMarker = computed(
   () => takeoffTime.value !== null || landingTime.value !== null
 )
@@ -140,6 +143,12 @@ function onFileSelected(file: File) {
 
 function startNewVideo() {
   history.finalizeDraft()
+  // usePoseDetection aborts a scan of the outgoing video on its own (it
+  // watches videoRef), but it deliberately never moves `status` off
+  // 'loading'/'scanning' by itself on a video swap — only a fresh run() or
+  // an explicit cancel() does that. Without this, clearing videoSrc mid-scan
+  // would leave the progress bar spinning forever.
+  pose.cancel()
   videoSrc.value = ''
   clearMarkers()
 }
@@ -299,6 +308,62 @@ onUnmounted(() => {
             @set-landing="setLanding(currentTime)"
             @clear-markers="clearMarkers"
           />
+
+          <div class="rounded-xl border border-surface-lighter bg-surface-light p-3 text-xs">
+            <button
+              v-if="pose.status.value !== 'scanning' && pose.status.value !== 'loading'"
+              class="w-full min-h-11 rounded-lg bg-brand text-sm font-medium text-white
+                     hover:brightness-110 transition"
+              @click="pose.run()"
+            >
+              Найти прыжок автоматически
+            </button>
+
+            <div v-else class="space-y-2">
+              <p class="text-slate-400">
+                {{ pose.status.value === 'loading' ? 'Загружаем модель (~8 МБ)…' : 'Разбираем кадры…' }}
+              </p>
+              <div class="h-1.5 rounded-full bg-surface-lighter overflow-hidden">
+                <div class="h-full bg-brand transition-all"
+                     :style="{ width: (pose.progress.value * 100).toFixed(0) + '%' }" />
+              </div>
+              <button class="w-full min-h-11 rounded-lg border border-surface-lighter text-slate-400"
+                      @click="pose.cancel()">
+                Отмена
+              </button>
+            </div>
+
+            <p v-if="pose.error.value" class="mt-2 text-rose-400">{{ pose.error.value }}</p>
+            <p v-if="pose.status.value === 'cancelled'" class="mt-2 text-slate-500">Отменено</p>
+
+            <div v-if="pose.result.value" class="mt-3 space-y-1 font-mono text-slate-300">
+              <p class="text-base font-sans font-semibold text-white">
+                {{ pose.result.value.verdict.kind === 'unusable'
+                    ? 'измерить не удалось'
+                    : pose.result.value.verdict.heightCm.toFixed(1) + ' см' }}
+              </p>
+              <p class="font-sans text-slate-400">
+                {{ pose.result.value.verdict.kind }}<template v-if="'reason' in pose.result.value.verdict">
+                · {{ pose.result.value.verdict.reason }}</template>
+              </p>
+              <p v-if="'message' in pose.result.value.verdict" class="font-sans text-slate-500">
+                {{ pose.result.value.verdict.message }}
+              </p>
+              <template v-if="pose.result.value.analysis">
+                <p>flight-time {{ pose.result.value.analysis.flightTimeHeightCm.toFixed(1) }} см</p>
+                <p>R² {{ pose.result.value.analysis.rSquared.toFixed(4) }}</p>
+                <p>рост {{ pose.result.value.analysis.statureM.toFixed(2) }} м</p>
+                <p>масштаб {{ pose.result.value.analysis.scalePxPerM.toFixed(1) }} px/м</p>
+                <p>кадров в полёте {{ pose.result.value.analysis.flightFrames }}</p>
+                <p>±{{ pose.result.value.analysis.errorCm.toFixed(2) }} см (только фит)</p>
+              </template>
+              <p v-if="pose.scatter.value" class="text-amber-300">
+                σ ландмарок {{ pose.scatter.value.overall.toFixed(4) }},
+                стопы {{ pose.scatter.value.feet.toFixed(4) }}
+              </p>
+              <p class="text-slate-500">кадров разобрано {{ pose.frames.value.length }}</p>
+            </div>
+          </div>
 
           <!-- Desktop: result stays beside the video, no separate scroll section -->
           <div v-if="isDesktop" ref="resultsAnchor">
