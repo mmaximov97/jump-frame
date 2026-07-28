@@ -20,13 +20,26 @@ describe('buildComTrack', () => {
     expect(track.comY[0]).toBeCloseTo(0.5 * VIDEO.height, 6)
   })
 
-  it('takes footY as the lowest of the six foot landmarks', () => {
+  // Was "takes footY as the lowest of the six foot landmarks", asserting a
+  // plain maximum. footY is now the median of the six — a maximum is biased
+  // and high-variance under noise at exactly the point the pipeline is most
+  // sensitive to it (see computeFootY's docstring in comTrack.ts). Updated to
+  // pin the new definition and to demonstrate the property that motivated
+  // the change: a single spiked landmark (RIGHT_FOOT_INDEX here, standing in
+  // for a misdetection) no longer drags footY all the way down to it.
+  it('takes footY as the median of the six foot landmarks, resisting a single spike', () => {
     const track = buildComTrack([frame(0, {
-      [LM.LEFT_ANKLE]: { x: 0.5, y: 0.70 },
-      [LM.LEFT_HEEL]: { x: 0.5, y: 0.80 },
-      [LM.LEFT_FOOT_INDEX]: { x: 0.5, y: 0.75 },
+      [LM.LEFT_ANKLE]: { x: 0.5, y: 0.60 },
+      [LM.RIGHT_ANKLE]: { x: 0.5, y: 0.61 },
+      [LM.LEFT_HEEL]: { x: 0.5, y: 0.79 },
+      [LM.RIGHT_HEEL]: { x: 0.5, y: 0.81 },
+      [LM.LEFT_FOOT_INDEX]: { x: 0.5, y: 0.76 },
+      // The spike: far below the rest of the cluster. A maximum would report
+      // the foot here, 9-30 points of normalized height below the truth.
+      [LM.RIGHT_FOOT_INDEX]: { x: 0.5, y: 0.90 },
     })], VIDEO)
-    expect(track.footY[0]).toBeCloseTo(0.80 * VIDEO.height, 6)
+    // Sorted: [0.60, 0.61, 0.76, 0.79, 0.81, 0.90] -> median = avg(0.76, 0.79).
+    expect(track.footY[0]).toBeCloseTo(0.775 * VIDEO.height, 6)
   })
 
   it('carries the frame times through unchanged', () => {
