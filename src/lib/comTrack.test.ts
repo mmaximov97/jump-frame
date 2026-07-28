@@ -13,6 +13,15 @@ function frame(time: number, overrides: Record<number, Landmark>): PoseFrame {
   return { time, landmarks }
 }
 
+// Duplicated from comTrack.ts's own (unexported) helper, so the "naive"
+// baseline below can hold footY's statistic fixed at the shipped median and
+// vary only the thing this test is actually about: percentile vs maximum.
+function median(xs: number[]): number {
+  const sorted = [...xs].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!
+}
+
 describe('buildComTrack', () => {
   it('scales normalized coordinates into pixels', () => {
     const track = buildComTrack([frame(0, {})], VIDEO)
@@ -67,10 +76,20 @@ describe('buildComTrack', () => {
     expect(track.staturePx).toBe(0)
   })
 
-  it('resists the noise spike a plain maximum would latch onto', () => {
-    // footY is itself a max over six landmarks, so noise pushes spans upward.
-    // A plain Math.max then chases the largest spike; the 90th percentile does
-    // not. Compare the two against the value the generator actually encodes.
+  // Isolates the percentile-vs-maximum choice specifically. The naive
+  // baseline below uses the SAME footY statistic as buildComTrack — the
+  // median of the six foot landmarks — and differs only in how spans are
+  // aggregated across frames: Math.max instead of the 90th percentile. This
+  // matters because footY itself changed (median, not a max) in a later
+  // fix: if the naive baseline recomputed footY as a max too, the median
+  // improvement alone would already beat it regardless of which span
+  // aggregation was used, and this test would stop discriminating what it
+  // claims to. Mutation-tested: swapping `percentile(spans, 0.9)` for
+  // `Math.max(...spans)` in buildComTrack now makes this test fail (it did
+  // not fail under the old max-based footY, where the median improvement
+  // hadn't happened yet and the naive baseline was a legitimately weaker
+  // comparison) — see the fix report for the mutation-test output.
+  it('resists the noise spike a plain maximum-of-spans would latch onto', () => {
     const truthPx = 1.8 * 400 * 0.936 / 0.9 // stature * scale * nose fraction / estimator divisor
 
     for (const seed of [1, 2, 3, 4, 5]) {
@@ -82,7 +101,9 @@ describe('buildComTrack', () => {
       const track = buildComTrack(clip.frames, VIDEO)
 
       const spans = clip.frames.map((f) => {
-        const foot = Math.max(...FOOT_LANDMARKS.map((i) => f.landmarks[i]!.y * VIDEO.height))
+        // Same footY statistic as production (median of six) — only the
+        // percentile-vs-max aggregation below is allowed to differ.
+        const foot = median(FOOT_LANDMARKS.map((i) => f.landmarks[i]!.y * VIDEO.height))
         return foot - f.landmarks[LM.NOSE]!.y * VIDEO.height
       })
       const naivePx = Math.max(...spans) / 0.9

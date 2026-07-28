@@ -39,20 +39,31 @@ const MAX_FLIGHT_SECONDS = 1.5
  *
  * Measured 3, 4, 5, and 6 with the quadratic crossing (see quadraticCrossing)
  * on the PR-B acceptance grid plus this module's own fps x takeoffPhase grid,
- * tracking landing as well as takeoff:
- *   - 5 and 6 REGRESS an already-passing test (`fps=30, takeoffPhase=0.8`
- *     landing error grows to 1.07x its own bar) — a longer window starts
- *     reaching past where the airborne run is still cleanly ballistic for a
- *     short flight, and are disqualified on that alone.
- *   - 3 and 4 both leave this module's grid comfortably passing. 3 is
- *     slightly more accurate clean (tuck-free) and slightly better on the
- *     acceptance suite's leg-tuck case (1.04 cm vs 1.21 cm error, both still
- *     over the 1 cm bar). 4 is the better choice under landmark noise, the
- *     more realistic failure mode: on the acceptance suite's own 5 noise
- *     seeds, 4's worst case is 2.44 cm against 3's 4.66 cm; widened to 30
- *     seeds, 4 keeps a lower mean (1.89 vs 2.16 cm) and RMS (2.32 vs 2.76 cm).
- * Kept at 4, the value Task 4 already established and reviewed, since it is
- * not dominated by 3 on the criterion that matters most for real footage.
+ * tracking landing as well as takeoff. Re-measured under the shipped
+ * pipeline (footY as the median of six landmarks, not the old maximum —
+ * the first version of this comment's numbers were measured before that
+ * change and no longer reproduce):
+ *   - 5 and 6 still REGRESS an already-passing test (`fps=30,
+ *     takeoffPhase=0.8` landing error still measures 1.07x its own bar,
+ *     unchanged by the footY fix since this is a noise-free comparison) — a
+ *     longer window starts reaching past where the airborne run is still
+ *     cleanly ballistic for a short flight, and are disqualified on that
+ *     alone.
+ *   - 3 and 4 both leave this module's grid comfortably passing, and TIE on
+ *     the fps x takeoffPhase sweep's worst case (1.0386 cm at 30fps,
+ *     takeoffPhase 0.1 for both — an unrelated extendBoundary artifact, not
+ *     sensitive to this constant) and on the acceptance suite's exact 5
+ *     noise seeds (both 2.7618 cm worst case). 3 is slightly better on the
+ *     leg-tuck case (1.0421 cm vs 4's 1.2067 cm, both still over the 1 cm
+ *     bar) and on the fraction of a wider 50-seed noise sweep landing under
+ *     1 cm (32 of 50, 64%, vs 4's 28 of 50, 56%). 4 is the better choice on
+ *     the noise sweep's mean (1.202 cm vs 3's 1.206 cm — a near-tie) and RMS
+ *     (1.672 cm vs 3's 1.754 cm — a clearer win), the two statistics that
+ *     weight the tail rather than just counting whether each draw clears an
+ *     arbitrary 1cm line.
+ * Kept at 4: not dominated by 3 on RMS, the criterion that best reflects
+ * "how bad does a typical bad case get" for real footage, even though 3 now
+ * wins on more of the individual comparisons than it used to.
  */
 const EDGE_FIT_FRAMES = 4
 /**
@@ -165,13 +176,17 @@ function sign(x: number): number {
  * a === 0 or a negative discriminant.
  *
  * Uses the numerically stable form (Numerical Recipes §5.6) rather than the
- * textbook (-b +/- sqrt(disc)) / 2a: when one root sits much closer to zero
- * than the other — exactly this situation, where one root is near the true
- * takeoff/landing crossing and the other is far outside the sampled window —
- * the textbook formula subtracts two nearly-equal quantities for the small
- * root and loses precision to cancellation. Computing one root via the sum
- * (whichever sign avoids cancellation) and the other via the product of
- * roots (c/a = root1*root2) avoids that entirely.
+ * textbook (-b +/- sqrt(disc)) / 2a. Measured on this function's actual
+ * inputs: both roots are O(1) seconds and roughly a flight's duration apart
+ * (e.g. ~0.66s and ~1.30s in a typical clip), not one near zero and one far
+ * away — fitParabola expands its coefficients back to absolute video time
+ * before returning them, not a time centred near zero, so the catastrophic
+ * cancellation the stable form exists to avoid does not actually arise here.
+ * Measured difference from the textbook form on real inputs: <= 1.1e-16s,
+ * i.e. floating-point noise, not evidence of a live precision problem. Kept
+ * anyway as a correct-by-construction default: it costs nothing, and removes
+ * the need to re-derive whether some future caller's inputs could bring the
+ * two roots close enough together for the textbook form to matter.
  */
 function quadraticRoots(a: number, b: number, c: number): [number, number] | null {
   if (a === 0) return null
@@ -202,14 +217,21 @@ function quadraticRoots(a: number, b: number, c: number): [number, number] | nul
  * data); the crossing has no real root; or neither root lands inside
  * `bounds`. That last case matters as much as the first two: an
  * extrapolation that misses the narrow window it is supposed to explain is
- * not more trustworthy for having come from a fancier model, and `bounds`
- * already encodes which of the two roots is "the correct side" (the earlier
- * root for takeoff, the later one for landing) without needing to say so
- * explicitly — only one root can plausibly land inside a window narrower
- * than a single frame.
+ * not more trustworthy for having come from a fancier model.
+ *
+ * `preferEarlier` selects which of two in-bounds roots to use in the
+ * (unobserved so far — see below) case where both land inside `bounds`: the
+ * one closer to `lo` for takeoff, closer to `hi` for landing. `bounds` alone
+ * already does most of the work of picking "the correct side", since only
+ * one root can plausibly land inside a window narrower than a single frame —
+ * checked directly across 13,440 edge fits in this module's own test grids,
+ * zero of which had both roots in bounds. `preferEarlier` exists for
+ * correctness on inputs this suite has not sampled, not to fix an observed
+ * bug.
  */
 function quadraticCrossing(
-  times: number[], footY: number[], indices: number[], floorY: number, bounds: [number, number]
+  times: number[], footY: number[], indices: number[], floorY: number, bounds: [number, number],
+  preferEarlier: boolean
 ): number | null {
   const fit = fitParabola(indices.map((i) => times[i]!), indices.map((i) => footY[i]!))
   if (!fit) return null
@@ -218,10 +240,8 @@ function quadraticCrossing(
   const [lo, hi] = bounds
   const inBounds = roots.filter((t) => Number.isFinite(t) && t >= lo && t <= hi)
   if (inBounds.length === 0) return null
-  // Two roots both landing inside a sub-frame-wide window is not physically
-  // expected (see above) but is not provably impossible from the types
-  // alone, so pick deterministically rather than leave it to array order.
-  return inBounds.reduce((closest, t) => (Math.abs(t - hi) < Math.abs(closest - hi) ? t : closest))
+  const anchor = preferEarlier ? lo : hi
+  return inBounds.reduce((closest, t) => (Math.abs(t - anchor) < Math.abs(closest - anchor) ? t : closest))
 }
 
 /** The linear crossing estimate — the original method, kept as the fallback. */
@@ -250,14 +270,19 @@ function linearCrossing(
  * Prefers a quadratic fit (see quadraticCrossing) over the linear one
  * wherever there are enough points and the quadratic result is trustworthy;
  * falls back to the linear fit otherwise, which is itself already a
- * documented fallback (returns `fallback` when even that degenerates).
+ * documented fallback (returns `fallback` when even that degenerates). The
+ * fallback is not a rarely-used escape hatch: measured on a broad synthetic
+ * sweep (5 jump heights x 4 fps x 5 takeoff phases x 10 seeds, both edges),
+ * the quadratic path is declined on about a third of edge fits noise-free
+ * (34%) and about two-thirds under sigma=0.01 landmark noise (65%) — the
+ * linear fallback is doing much of the work, not covering a corner case.
  */
 function crossingTime(
   times: number[], footY: number[], indices: number[], floorY: number, fallback: number,
-  bounds: [number, number]
+  bounds: [number, number], preferEarlier: boolean
 ): number {
   if (indices.length >= MIN_QUADRATIC_FIT_FRAMES) {
-    const quadratic = quadraticCrossing(times, footY, indices, floorY, bounds)
+    const quadratic = quadraticCrossing(times, footY, indices, floorY, bounds, preferEarlier)
     if (quadratic !== null) return quadratic
   }
   return linearCrossing(times, footY, indices, floorY, fallback, bounds)
@@ -329,10 +354,10 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
   const takeoffTime = finalTakeoffFrame === 0
     ? times[0]!
     : crossingTime(times, footY, leadingExtended, floorY, times[finalTakeoffFrame]!,
-        [times[finalTakeoffFrame - 1]!, times[finalTakeoffFrame]!])
+        [times[finalTakeoffFrame - 1]!, times[finalTakeoffFrame]!], true)
 
   const landingTime = crossingTime(times, footY, trailingExtended, floorY, times[finalLandingFrame]!,
-    [times[finalLandingFrame - 1]!, times[finalLandingFrame]!])
+    [times[finalLandingFrame - 1]!, times[finalLandingFrame]!], false)
 
   return {
     takeoffFrame: finalTakeoffFrame, landingFrame: finalLandingFrame,

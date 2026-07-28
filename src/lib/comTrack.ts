@@ -47,10 +47,15 @@ export interface ComTrack {
   comY: number[]
   /**
    * Vertical position of the foot, in pixels, y down: the median of both
-   * ankles, heels and toes (see computeFootY). Close to, but not always
-   * exactly, the lowest of the six — noise can occasionally push a
-   * ground-contact landmark below the true floor, and the median resists
-   * exactly that kind of single-landmark spike where a maximum would not.
+   * ankles, heels and toes (see computeFootY). Not the lowest of the six —
+   * that is the point of using a median instead of a maximum. Measured
+   * (synthetic landmark noise, Monte Carlo–confirmed independently of the
+   * generator): the median sits systematically about 1.6-1.7 standard
+   * deviations above the lowest of the six, at both sigma 0.005 and 0.01 —
+   * larger than a plain 4-sample order-statistic gap (~1.03 sigma) because
+   * the two ankles occasionally rank into the comparison too. That gap is
+   * the resistance to a single-landmark spike this statistic exists for,
+   * not a bug to close.
    */
   footY: number[]
   /** Standing height in pixels, used to normalize thresholds by the person. */
