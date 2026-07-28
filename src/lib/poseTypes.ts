@@ -14,6 +14,16 @@ export interface PoseFrame {
 }
 
 export interface VideoSize {
+  /**
+   * Video pixel width. Currently unread by every function under src/lib —
+   * only `.height` feeds any calculation (verified: passing `width: 1`
+   * against a real clip reproduces bit-identical results to the true video
+   * width). Still pass the actual decoded video pixel width here, not a CSS
+   * or display width: nothing checks this today, which is not a guarantee
+   * it stays unread — a future change (e.g. a horizontal-only crop or a
+   * landscape jump) could start reading it, and a caller that had been
+   * passing a convenient CSS width would only find out then.
+   */
   width: number
   height: number
 }

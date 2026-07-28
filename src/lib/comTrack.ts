@@ -1,5 +1,6 @@
 import { centreOfMass } from './bodyModel'
-import { FOOT_LANDMARKS, LM, type PoseFrame, type VideoSize } from './poseTypes'
+import { FOOT_LANDMARKS, LANDMARK_COUNT, LM, type PoseFrame, type VideoSize } from './poseTypes'
+import { percentile } from './stats'
 
 function median(xs: number[]): number {
   const sorted = [...xs].sort((a, b) => a - b)
@@ -41,7 +42,16 @@ function computeFootY(frame: PoseFrame, video: VideoSize): number {
 }
 
 export interface ComTrack {
-  /** Frame presentation times, seconds. */
+  /**
+   * Frame presentation times, seconds. Always the same length as `comY` and
+   * `footY` — buildComTrack pushes to all three in lockstep, one malformed
+   * frame at a time (see buildComTrack), skipping a frame from all three
+   * arrays at once rather than leaving them to drift out of correspondence.
+   * Callers outside this file that build a ComTrack by hand (tests do) must
+   * preserve that invariant themselves; findFlightPhase checks it rather
+   * than assuming it, since it is exported and this is not encoded in the
+   * type.
+   */
   times: number[]
   /** Body centre of mass, vertical pixels, y down. */
   comY: number[]
@@ -71,12 +81,6 @@ const NOSE_HEIGHT_FRACTION = 0.9
  */
 const STANDING_PERCENTILE = 0.9
 
-function percentile(sorted: number[], p: number): number {
-  if (sorted.length === 0) return 0
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))
-  return sorted[index]!
-}
-
 export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
   const times: number[] = []
   const comY: number[] = []
@@ -84,6 +88,17 @@ export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
   const spans: number[] = []
 
   for (const frame of frames) {
+    // MediaPipe emits an empty landmarks array when it detects no pose at
+    // all, and any other length is equally unusable — every index below
+    // (LM.NOSE, FOOT_LANDMARKS, bodyModel's SEGMENTS) assumes exactly
+    // LANDMARK_COUNT entries. Skip the frame rather than index into
+    // `undefined`: a single dropped-pose frame mid-clip should degrade the
+    // track by one sample, not crash the whole measurement. If every frame
+    // is malformed, times/comY/footY all come out empty and
+    // findFlightPhase's own guard reports 'no-flight' — a verdict, not a
+    // throw.
+    if (frame.landmarks.length !== LANDMARK_COUNT) continue
+
     times.push(frame.time)
     comY.push(centreOfMass(frame.landmarks).y * video.height)
 
@@ -94,7 +109,13 @@ export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
   }
 
   spans.sort((a, b) => a - b)
-  const staturePx = frames.length === 0
+  // spans.length, not frames.length: a clip full of malformed (skipped)
+  // frames must fall back to 0 just as an empty clip does, and percentile's
+  // own empty-array guard already returns 0 — this condition just makes
+  // that intent explicit for a reader, rather than relying on frames.length
+  // happening to be 0 too (true before landmark-length skipping existed,
+  // not necessarily true now that frames.length and spans.length can differ).
+  const staturePx = spans.length === 0
     ? 0
     : percentile(spans, STANDING_PERCENTILE) / NOSE_HEIGHT_FRACTION
 

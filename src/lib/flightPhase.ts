@@ -1,3 +1,4 @@
+import { percentile } from './stats'
 import { fitParabola } from './parabolaFit'
 import type { ComTrack } from './comTrack'
 
@@ -25,17 +26,74 @@ export interface FlightPhase {
   takeoffTime: number
   /** Sub-frame landing instant, seconds. */
   landingTime: number
-  floorY: number
 }
+
+/**
+ * What findFlightPhase found, or why it found nothing usable.
+ *
+ * - 'found': a normal airborne run, at or under MAX_FLIGHT_SECONDS.
+ * - 'too-long': a candidate airborne run WAS found and fully resolved
+ *   (sub-frame takeoff/landing included) — but it lasted longer than any
+ *   real human jump. Carries `phase` anyway, deliberately: the run being
+ *   suspiciously long does not mean it should be thrown away unexamined.
+ *   The two situations that produce this outcome — a saved slow-motion clip
+ *   and a tracker that lost the athlete — are not distinguishable from
+ *   duration alone, but they ARE distinguishable downstream, once the com
+ *   fit and stature estimate exist: slow motion inflates the fitted stature
+ *   by k² (see MAX_FLIGHT_SECONDS below) and a lost tracker tends to wreck
+ *   rSquared. That downstream evaluation is jumpFromCom's job, not this
+ *   module's — findFlightPhase only knows about foot trajectories and
+ *   thresholds, not body proportions. See jumpFromCom.ts's `assess`.
+ * - 'no-flight': no candidate airborne run exists at all — the track is
+ *   empty or degenerate (no stature could be estimated), or the foot never
+ *   cleared AIRBORNE_THRESHOLD_FRACTION anywhere in the clip.
+ * - 'landing-past-end': an airborne run was found but the clip ends before
+ *   the foot comes back down, so there is no landing to resolve. Kept
+ *   distinct from 'no-flight': the user action is different (record a
+ *   longer clip / keep recording through the landing) from "we never saw
+ *   you leave the ground".
+ */
+export type FlightPhaseOutcome =
+  | { kind: 'found'; phase: FlightPhase }
+  | { kind: 'too-long'; phase: FlightPhase }
+  | { kind: 'no-flight' }
+  | { kind: 'landing-past-end' }
 
 /** The foot is on the ground most of the clip, so a high percentile is the floor. */
 const FLOOR_PERCENTILE = 0.9
 /** Airborne once the foot clears this fraction of the person's own height. */
 const AIRBORNE_THRESHOLD_FRACTION = 0.02
-/** Nobody stays in the air this long; a longer run is not a jump. */
+/**
+ * Nobody stays in the air this long; a longer run is not an ordinary jump —
+ * but it is not thrown away either (see FlightPhaseOutcome's 'too-long').
+ *
+ * The two real causes of an over-long run are a saved slow-motion clip and a
+ * tracker that lost the athlete, and this constant alone cannot tell them
+ * apart. Slow motion is the one with a clean physical signature: stretching
+ * time by a factor k leaves pixel positions unchanged but divides the
+ * fitted (apparent) acceleration by k², so scalePxPerM — which is read
+ * straight off that acceleration — is also divided by k², and statureM
+ * (staturePx / scalePxPerM) comes out multiplied by k². A k as small as 2
+ * already turns a 1.8 m athlete into an apparent 7.2 m one, comfortably
+ * outside jumpFromCom's MIN/MAX_STATURE_M band. That is what makes it safe
+ * to let a too-long run keep going through the fit instead of rejecting it
+ * here: the stature check downstream almost always gives the more specific
+ * "slow motion" diagnosis, and this constant remains as the last-resort
+ * guard for the runs that check does not catch (see jumpFromCom.ts's
+ * `assess`, the `tooLong` field on QualityMetrics).
+ */
 const MAX_FLIGHT_SECONDS = 1.5
 /**
- * How many airborne frames feed the sub-frame edge estimate.
+ * How many airborne frames the coarse threshold gathers for the sub-frame
+ * edge estimate BEFORE extension — not how many frames the fit actually
+ * sees. extendBoundary (see MAX_BOUNDARY_EXTENSION) can reclaim one more
+ * frame at each edge first, so the crossing fit itself can run on up to
+ * EDGE_FIT_FRAMES + MAX_BOUNDARY_EXTENSION frames. Measured directly: at fps
+ * 60, takeoffPhase 0.5, the fit receives 5 frames, not 4. The sweep below
+ * still measures this constant's effect on accuracy correctly — it exercises
+ * the real pipeline, extension included — but any reasoning that treats
+ * EDGE_FIT_FRAMES as "the frame count the fit sees" is off by however many
+ * frames extension reclaimed on that particular run.
  *
  * Measured 3, 4, 5, and 6 with the quadratic crossing (see quadraticCrossing)
  * on the PR-B acceptance grid plus this module's own fps x takeoffPhase grid,
@@ -89,12 +147,6 @@ const MIN_QUADRATIC_FIT_FRAMES = 3
  * is 1: reclaim at most one frame per edge.
  */
 const MAX_BOUNDARY_EXTENSION = 1
-
-function percentile(values: number[], p: number): number {
-  const sorted = [...values].sort((a, b) => a - b)
-  const index = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))
-  return sorted[index]!
-}
 
 /** Least-squares slope and intercept of y over t. Returns null if t never varies. */
 function fitLine(t: number[], y: number[]): { a: number; b: number } | null {
@@ -288,11 +340,18 @@ function crossingTime(
   return linearCrossing(times, footY, indices, floorY, fallback, bounds)
 }
 
-export function findFlightPhase(track: ComTrack): FlightPhase | null {
+export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   const { times, footY, staturePx } = track
-  if (footY.length === 0 || staturePx <= 0) return null
+  // times.length !== footY.length should never happen — buildComTrack pushes
+  // to both arrays together, one frame at a time — but this function is
+  // exported and ComTrack does not encode the invariant in its type, so a
+  // hand-built track (tests do this) that breaks it is treated as having no
+  // usable data rather than indexing past the shorter array below.
+  if (footY.length === 0 || footY.length !== times.length || staturePx <= 0) {
+    return { kind: 'no-flight' }
+  }
 
-  const floorY = percentile(footY, FLOOR_PERCENTILE)
+  const floorY = percentile([...footY].sort((a, b) => a - b), FLOOR_PERCENTILE)
   const threshold = AIRBORNE_THRESHOLD_FRACTION * staturePx
 
   let bestStart = -1
@@ -309,14 +368,11 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
       start = -1
     }
   }
-  if (bestStart === -1) return null
+  if (bestStart === -1) return { kind: 'no-flight' }
 
   const takeoffFrame = bestStart
   const landingFrame = bestStart + bestLength
-  if (landingFrame >= times.length) return null
-
-  const duration = times[landingFrame]! - times[takeoffFrame]!
-  if (duration > MAX_FLIGHT_SECONDS) return null
+  if (landingFrame >= times.length) return { kind: 'landing-past-end' }
 
   const leading = Array.from(
     { length: Math.min(EDGE_FIT_FRAMES, bestLength) },
@@ -329,7 +385,12 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
 
   // The coarse threshold can lag the true takeoff/landing split by about a
   // frame (see MAX_BOUNDARY_EXTENSION); reclaim any adjacent frame that is
-  // actually part of the flight before fitting and clamping.
+  // actually part of the flight before fitting and clamping. This always
+  // runs, even for a run already far past MAX_FLIGHT_SECONDS: the too-long
+  // case still needs a fully-resolved phase to hand downstream (see
+  // FlightPhaseOutcome), and extension's own cost is bounded by
+  // EDGE_FIT_FRAMES + MAX_BOUNDARY_EXTENSION regardless of how long the
+  // airborne run is.
   const leadingExtended = extendBoundary(times, footY, floorY, threshold, leading, -1, -1)
   const trailingExtended = extendBoundary(times, footY, floorY, threshold, trailing, 1, times.length - 1)
 
@@ -338,11 +399,9 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
 
   // Extension only ever pulls the takeoff boundary earlier and/or the
   // landing boundary later, so it can only grow the reported duration
-  // relative to the coarse pre-extension run. MAX_FLIGHT_SECONDS must
-  // therefore be re-checked against what is actually reported: a coarse run
-  // measured just under the cap can be extended past it.
+  // relative to the coarse pre-extension run — this final figure, not the
+  // coarse one, is what MAX_FLIGHT_SECONDS below is checked against.
   const finalDuration = times[finalLandingFrame]! - times[finalTakeoffFrame]!
-  if (finalDuration > MAX_FLIGHT_SECONDS) return null
 
   // finalTakeoffFrame can reach 0 two different ways: the coarse run
   // genuinely started on the clip's first frame (nothing to extrapolate
@@ -359,8 +418,10 @@ export function findFlightPhase(track: ComTrack): FlightPhase | null {
   const landingTime = crossingTime(times, footY, trailingExtended, floorY, times[finalLandingFrame]!,
     [times[finalLandingFrame - 1]!, times[finalLandingFrame]!], false)
 
-  return {
+  const phase: FlightPhase = {
     takeoffFrame: finalTakeoffFrame, landingFrame: finalLandingFrame,
-    takeoffTime, landingTime, floorY,
+    takeoffTime, landingTime,
   }
+
+  return finalDuration > MAX_FLIGHT_SECONDS ? { kind: 'too-long', phase } : { kind: 'found', phase }
 }

@@ -76,6 +76,36 @@ describe('buildComTrack', () => {
     expect(track.staturePx).toBe(0)
   })
 
+  // Minor (final whole-branch review): an empty landmarks array is exactly
+  // what MediaPipe emits when it detects no pose in a frame, and any other
+  // length is equally unusable — every landmark index this file and
+  // bodyModel.ts touch assumes exactly LANDMARK_COUNT entries. Before this
+  // fix, either indexed straight into `undefined` and threw
+  // (`TypeError: Cannot read properties of undefined`).
+  it('skips a frame with an empty landmarks array instead of throwing', () => {
+    const good = frame(0, {})
+    const noPose = { time: 1 / 60, landmarks: [] }
+    expect(() => buildComTrack([good, noPose, frame(2 / 60, {})], VIDEO)).not.toThrow()
+    const track = buildComTrack([good, noPose, frame(2 / 60, {})], VIDEO)
+    // The malformed frame is skipped, not padded or nulled — the other two
+    // frames' times survive unchanged and in order.
+    expect(track.times).toEqual([0, 2 / 60])
+  })
+
+  it('skips a frame with the wrong landmark count (25, not 33) instead of throwing', () => {
+    const good = frame(0, {})
+    const wrongCount = { time: 1 / 60, landmarks: Array.from({ length: 25 }, () => ({ x: 0.5, y: 0.5 })) }
+    expect(() => buildComTrack([good, wrongCount], VIDEO)).not.toThrow()
+    const track = buildComTrack([good, wrongCount], VIDEO)
+    expect(track.times).toEqual([0])
+  })
+
+  it('falls back to staturePx 0 when every frame is malformed, same as an empty clip', () => {
+    const track = buildComTrack([{ time: 0, landmarks: [] }, { time: 1 / 60, landmarks: [] }], VIDEO)
+    expect(track.times).toEqual([])
+    expect(track.staturePx).toBe(0)
+  })
+
   // Isolates the percentile-vs-maximum choice specifically. The naive
   // baseline below uses the SAME footY statistic as buildComTrack — the
   // median of the six foot landmarks — and differs only in how spans are

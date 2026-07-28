@@ -95,7 +95,9 @@ describe('acceptance: why the segment model was necessary', () => {
   it('would be wrong on the same jump if the hip midpoint stood in for the com', () => {
     const clip = generateJump({ ...BASE, tuckM: 0.35 })
     const track = buildComTrack(clip.frames, VIDEO)
-    const phase = findFlightPhase(track)!
+    const outcome = findFlightPhase(track)
+    if (outcome.kind !== 'found') throw new Error(`expected 'found', got '${outcome.kind}'`)
+    const phase = outcome.phase
     const from = phase.takeoffFrame + 1
     const to = phase.landingFrame - 1
 
@@ -157,10 +159,22 @@ describe('acceptance: noise and failure modes', () => {
     expect(under1cm).toBeGreaterThanOrEqual(22)
   })
 
-  it('catches baked-in slow motion through an impossible stature', () => {
-    const result = measureJump(generateJump({ ...BASE, timeScale: 2 }).frames, VIDEO)
+  // Was timeScale: 2 (1.277s apparent flight against the 1.5s
+  // MAX_FLIGHT_SECONDS cap — only 14.9% headroom). That headroom mattered
+  // more than it looked: findFlightPhase used to reject any run over the cap
+  // outright, before the stature check below ever ran, so a timeScale that
+  // stayed under the cap never actually exercised the interaction between
+  // the two — this test was, unknowingly, only ever testing the stature
+  // check on an ordinary-length run. timeScale: 8 (5.108s apparent flight,
+  // 3.4x the cap) is the design's actual motivating case — a 240fps clip
+  // saved and played back as 30fps — and is comfortably past where the OLD
+  // code fell back to a bare "no jump found" with no analysis and no reason
+  // at all. See the k x jumpHeightM sweep below for the general case.
+  it('catches baked-in slow motion through an impossible stature, well past the duration cap', () => {
+    const result = measureJump(generateJump({ ...BASE, timeScale: 8 }).frames, VIDEO)
     expect(result.analysis).not.toBeNull()
     expect(result.verdict.kind).toBe('unusable')
+    expect(result.verdict.kind === 'unusable' && result.verdict.reason).toBe('slow-motion')
     expect(result.analysis!.statureM).toBeGreaterThan(2.2)
   })
 
@@ -171,5 +185,36 @@ describe('acceptance: noise and failure modes', () => {
     const relative = Math.abs(result.comHeightCm - result.flightTimeHeightCm) / result.comHeightCm
     expect(relative).toBeLessThan(0.1)
     expect(result.comHeightCm).toBeGreaterThan(150)
+  })
+
+  // Important 2 (final whole-branch review): findFlightPhase used to reject
+  // any airborne run over MAX_FLIGHT_SECONDS outright, so the stature-band
+  // slow-motion check below could never run on the case that actually
+  // motivated it — a saved slow-motion clip, which is exactly what pushes
+  // duration past the cap in the first place. Measured before this fix (see
+  // the fix report for the full before/after table): at jumpHeightM 0.5,
+  // k=2 (1.277s) and k=2.4 (1.533s) were correctly diagnosed 'slow-motion',
+  // but k=3 and above returned a null analysis and a generic failure — the
+  // highest surviving k fell with jump height (about 3.15 at 0.3m, 2.40 at
+  // 0.5m, 2.00 at 0.7m, since a smaller true flight time leaves more k
+  // headroom under the fixed 1.5s cap). After the fix, findFlightPhase still
+  // resolves the phase and tags it 'too-long' instead of discarding it, so
+  // the stature check runs regardless of duration: every cell below,
+  // including k=8 — an order of magnitude past the cap, and the 240fps-saved-
+  // as-30fps case that motivated the whole check — comes back diagnosed.
+  it('diagnoses slow motion across a k x jump-height grid, including well past the old duration cliff', () => {
+    const ks = [2, 3, 4, 6, 8]
+    const jumpHeightsM = [0.3, 0.5, 0.7]
+    for (const jumpHeightM of jumpHeightsM) {
+      for (const k of ks) {
+        const clip = generateJump({ ...BASE, jumpHeightM, timeScale: k })
+        const result = measureJump(clip.frames, VIDEO)
+        expect(result.verdict.kind, `h=${jumpHeightM}, k=${k}`).toBe('unusable')
+        expect(
+          result.verdict.kind === 'unusable' && result.verdict.reason,
+          `h=${jumpHeightM}, k=${k}`
+        ).toBe('slow-motion')
+      }
+    }
   })
 })
