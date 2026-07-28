@@ -350,17 +350,20 @@ onUnmounted(() => {
                 {{ pose.result.value.verdict.message }}
               </p>
               <template v-if="pose.result.value.analysis">
+                <p>центр масс {{ pose.result.value.analysis.comHeightCm.toFixed(1) }} см</p>
                 <p>flight-time {{ pose.result.value.analysis.flightTimeHeightCm.toFixed(1) }} см</p>
                 <p>R² {{ pose.result.value.analysis.rSquared.toFixed(4) }}</p>
                 <p>рост {{ pose.result.value.analysis.statureM.toFixed(2) }} м</p>
                 <p>масштаб {{ pose.result.value.analysis.scalePxPerM.toFixed(1) }} px/м</p>
                 <p>кадров в полёте {{ pose.result.value.analysis.flightFrames }}</p>
+                <p>кадр отрыва {{ pose.result.value.analysis.takeoffFrame }}, кадр приземления {{ pose.result.value.analysis.landingFrame }}</p>
                 <p>±{{ pose.result.value.analysis.errorCm.toFixed(2) }} см (только фит)</p>
               </template>
               <p v-if="pose.scatter.value" class="text-amber-300">
                 σ ландмарок {{ pose.scatter.value.overall.toFixed(4) }},
                 стопы {{ pose.scatter.value.feet.toFixed(4) }}
               </p>
+              <p v-else class="text-slate-500">недостаточно неподвижных кадров</p>
               <p class="text-slate-500">кадров разобрано {{ pose.frames.value.length }}</p>
             </div>
           </div>

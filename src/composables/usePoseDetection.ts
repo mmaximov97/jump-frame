@@ -342,26 +342,53 @@ export function usePoseDetection(
     }
   }
 
-  function cancel(): void {
-    // The abort signal cannot interrupt a model download already in flight —
-    // the MediaPipe loader takes no signal — so without this, cancelling
-    // during 'loading' would leave the status on 'loading' until the
-    // download finishes on its own. This makes the UI reflect the
-    // cancellation immediately; the run's own completion, once it notices
-    // the abort, writes the same value again.
+  /**
+   * Moves a live run to a terminal status without waiting for that run's own
+   * completion to notice the abort. Two callers need this, for two different
+   * reasons:
+   *
+   * - `cancel()`: the abort signal cannot interrupt a model download already
+   *   in flight (the MediaPipe loader takes no signal), so without this,
+   *   cancelling during 'loading' would leave the status on 'loading' until
+   *   the download finishes on its own.
+   * - the `videoRef` watcher below: a run whose video just changed can no
+   *   longer satisfy its own `isCurrent()` check (`videoRef.value === video`
+   *   is now false), so that run's `catch`/`finally` bail out silently and
+   *   never write a terminal status at all — not "eventually", never. Without
+   *   this, swapping the video mid-scan (any route: `startNewVideo`, but also
+   *   any other view that unmounts the video element, e.g. the guide or share
+   *   screens) leaves `status` stuck on 'loading'/'scanning' forever, with a
+   *   progress bar and Cancel button that no longer do anything.
+   *
+   * Guarded on the *current* `status` (not e.g. "is `abort` non-null and not
+   * yet aborted") specifically so calling this after a run has already
+   * finished naturally (`status` is `'done'`/`'error'`, `abort` still points
+   * at that now-inert, never-aborted controller) can't retroactively relabel
+   * a legitimate result as `'cancelled'` — and so the watcher firing for an
+   * unrelated reason (e.g. the very first video load, going from `null` to
+   * an element, with `status` still `'idle'`) is a no-op.
+   */
+  function finalizeAbortedRun(): void {
     if (!disposed && (status.value === 'loading' || status.value === 'scanning')) {
       status.value = 'cancelled'
     }
+  }
+
+  function cancel(): void {
+    finalizeAbortedRun()
     abort?.abort()
   }
 
   // A different (or cleared) video element means whatever run is in flight
-  // is scanning a clip the caller has already discarded. Abort immediately —
-  // the abort signal unblocks a wedged seek in the same tick — rather than
-  // letting the loop grind through its remaining, now-pointless samples.
-  // Also drop any saved restore state: it belongs to the old video, and the
-  // next run() (on whatever video is current now) must capture its own.
+  // is scanning a clip the caller has already discarded. Finalize the status
+  // (see finalizeAbortedRun's docstring — this is the case it exists for)
+  // and abort immediately — the abort signal unblocks a wedged seek in the
+  // same tick — rather than letting the loop grind through its remaining,
+  // now-pointless samples. Also drop any saved restore state: it belongs to
+  // the old video, and the next run() (on whatever video is current now)
+  // must capture its own.
   watch(videoRef, () => {
+    finalizeAbortedRun()
     abort?.abort()
     savedVideoState = null
   }, { flush: 'sync' })
