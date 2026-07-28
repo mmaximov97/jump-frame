@@ -33,15 +33,28 @@ describe('planFinePass', () => {
   // A coarse pass at 60 fps with stride 6 samples every 0.1 s.
   const coarse = Array.from({ length: 30 }, (_, i) => i * 0.1)
 
-  it('covers every frame within the window around the airborne run', () => {
+  it('leaves no gap in the window, and never repeats a coarse instant', () => {
     // airborne at coarse indices 10..14, i.e. 1.0 s .. 1.4 s
     const fine = planFinePass(coarse, [10, 11, 12, 13, 14], 3, 60)
-    expect(Math.min(...fine)).toBeCloseTo(1.0 - FINE_WINDOW_SECONDS, 6)
-    expect(Math.max(...fine)).toBeCloseTo(1.4 + FINE_WINDOW_SECONDS - 1 / 60, 6)
-    // consecutive samples are one frame apart
-    const sorted = [...fine].sort((a, b) => a - b)
-    for (let i = 1; i < sorted.length; i++) {
-      expect(sorted[i]! - sorted[i - 1]!).toBeCloseTo(1 / 60, 6)
+    const frame = 1 / 60
+    const from = 1.0 - FINE_WINDOW_SECONDS
+    const to = 1.4 + FINE_WINDOW_SECONDS
+
+    // The point of two passes is that together they read every frame in the
+    // window. Neither pass is contiguous on its own — the dense pass skips the
+    // instants the coarse pass already covered — so the property has to be
+    // stated over the union.
+    const covered = new Set(
+      [...coarse, ...fine]
+        .filter((t) => t >= from - 1e-9 && t < to - 1e-9)
+        .map((t) => Math.round(t / frame))
+    )
+    for (let n = Math.ceil(from / frame); n * frame < to; n++) {
+      expect(covered.has(n)).toBe(true)
+    }
+
+    for (const t of fine) {
+      expect(coarse.some((c) => Math.round(c / frame) === Math.round(t / frame))).toBe(false)
     }
   })
 

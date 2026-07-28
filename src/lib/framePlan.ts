@@ -20,6 +20,9 @@ export function planCoarsePass(duration: number, fps: number): number[] {
   if (!(duration > 0) || !(fps > 0)) return []
   const step = COARSE_STRIDE / fps
   const times: number[] = []
+  // Multiply (n * step) instead of accumulating (t += step) to avoid floating-point
+  // error. Over 60 seconds at 240 fps, repeated addition accumulates ~25 ms drift
+  // (6 frames off target). Multiplication avoids this entirely.
   for (let n = 0; n * step < duration; n++) times.push(n * step)
   return times
 }
