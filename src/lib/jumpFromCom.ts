@@ -136,12 +136,15 @@ export interface QualityMetrics {
   /**
    * Whether findFlightPhase's airborne run exceeded MAX_FLIGHT_SECONDS even
    * after its sub-frame boundary was fully resolved (see
-   * FlightPhaseOutcome's 'too-long' in flightPhase.ts). Almost always caught
-   * earlier and more specifically by the stature-band check below — slow
-   * motion inflates statureM by k² — but a genuinely lost tracker is not
-   * guaranteed to also fail rSquared or land outside the stature band, so
-   * this stays as an independent, final guard: a flight longer than any
-   * human achieves is never reported 'ok', whatever the other metrics say.
+   * FlightPhaseOutcome's 'too-long' in flightPhase.ts). Often caught earlier
+   * and more specifically by the stature-band check below — slow motion
+   * inflates statureM by k² — but a genuinely lost tracker is not guaranteed
+   * to also fail rSquared or land outside the stature band, and in the
+   * common case degrades rSquared only into the warn-tier 0.95-0.99 band,
+   * not below it. See `assess`'s docstring for why this is checked
+   * immediately after stature and, deliberately, before either warn-tier
+   * check: a flight longer than any human achieves must never be reported
+   * 'ok' — or merely caveated — whatever the other metrics say.
    */
   tooLong: boolean
 }
@@ -213,13 +216,18 @@ const MAX_METHOD_DISAGREEMENT = 0.2
  * reached — which is worse, because the app's credibility lasts exactly until
  * the first debunked result.
  *
- * The `tooLong` check runs last, after stature — deliberately: stature gives
- * the more specific and far more common 'slow-motion' diagnosis for the case
- * that actually motivated the duration cap (see flightPhase.ts), so it must
- * get first refusal. `tooLong` only fires for a run that passed every other
- * check AND still lasted longer than any human jump — evidence pointing at a
- * lost tracker specifically, not slow motion (which the stature check would
- * already have caught).
+ * The `tooLong` check runs immediately after stature, before either warn-tier
+ * check — deliberately: stature gives the more specific and far more common
+ * 'slow-motion' diagnosis for the case that actually motivated the duration
+ * cap (see flightPhase.ts), so it must get first refusal. But it cannot run
+ * any later than that: a lost tracker (the OTHER cause of an over-long run)
+ * typically degrades rSquared into the 0.95-0.99 band, not below 0.95 — the
+ * band the warn-tier rSquared check owns, not the unusable-tier one above —
+ * so placing `tooLong` after the warn-tier checks would let that check (or
+ * the method-disagreement one) intercept the common case and hand back a
+ * caveated number instead of a refusal, defeating the guard for the
+ * situation it exists to catch. When the input itself is untrustworthy, a
+ * caveated number is worse than no number, so `tooLong` outranks both warns.
  */
 export function assess(m: QualityMetrics): Verdict {
   if (!Number.isFinite(m.comHeightCm) || m.comHeightCm <= 0) {
@@ -247,6 +255,17 @@ export function assess(m: QualityMetrics): Verdict {
   if (m.statureM < MIN_STATURE_M || m.statureM > MAX_STATURE_M) {
     return { kind: 'unusable', reason: 'slow-motion', message: 'Похоже, видео в замедленной съёмке — результат недостоверен.' }
   }
+  // Must run here, before either warn-tier check below: a lost tracker
+  // typically degrades rSquared into the 0.95-0.99 band, not below 0.95, so
+  // a later position would let the warn-tier rSquared check (or the
+  // method-disagreement one) intercept the common case this guard exists
+  // for and hand back a caveated number instead of a refusal.
+  if (m.tooLong) {
+    return {
+      kind: 'unusable', reason: 'tracking-lost',
+      message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.',
+    }
+  }
   if (m.rSquared < MIN_CLEAN_R_SQUARED) {
     return {
       kind: 'warn', reason: 'tracking-lost', heightCm: m.comHeightCm,
@@ -257,12 +276,6 @@ export function assess(m: QualityMetrics): Verdict {
     return {
       kind: 'warn', reason: 'pose-asymmetry', heightCm: m.comHeightCm,
       message: 'Поза на отрыве и приземлении заметно различаются.',
-    }
-  }
-  if (m.tooLong) {
-    return {
-      kind: 'unusable', reason: 'tracking-lost',
-      message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.',
     }
   }
   return { kind: 'ok', heightCm: m.comHeightCm }

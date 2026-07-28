@@ -110,8 +110,11 @@ describe('assess', () => {
   // Important 2/3 (final whole-branch review): the duration guard that used
   // to live inside findFlightPhase now only tags the outcome 'too-long' and
   // lets the pipeline keep going — assess is where a still-too-long run
-  // finally gets refused, and only as a LAST resort, after every other
-  // check had its say.
+  // finally gets refused. It runs right after the stature check (the more
+  // specific 'slow-motion' diagnosis still gets first refusal), but BEFORE
+  // both warn-tier checks — a post-wave regression had it running last,
+  // after those two warns, which let them intercept it (see the two
+  // ordering tests below).
   describe('the tooLong last-resort guard', () => {
     it('refuses an otherwise-clean measurement that ran longer than any human jump', () => {
       const verdict = assess({ ...GOOD, tooLong: true })
@@ -135,6 +138,38 @@ describe('assess', () => {
 
     it('does not fire when the run was not too long', () => {
       expect(assess({ ...GOOD, tooLong: false })).toEqual({ kind: 'ok', heightCm: 50 })
+    })
+
+    // Regression pin (post-wave fix): tooLong used to be checked LAST, after
+    // both warn-tier checks, so either of them could intercept it before it
+    // ever got a chance to fire. This is not an edge case — a lost tracker
+    // (the failure this guard exists to catch, see MAX_FLIGHT_SECONDS's
+    // docstring in flightPhase.ts) typically degrades rSquared into the
+    // 0.95-0.99 band, not below 0.95, which is exactly the band the
+    // warn-tier rSquared check below owns. Asserting the full verdict
+    // (message included), not just `kind`: under the old, wrong ordering
+    // these still returned SOME truthy-looking verdict (a 'warn', with its
+    // own distinct kind and message) rather than erroring, so a `kind`-only
+    // assertion on the WRONG kind would still read as a meaningful failure —
+    // the risk here is specifically a correct-looking `kind: 'unusable'`
+    // coming from the wrong branch, which only `message` (tied 1:1 to the
+    // branch that produced it) pins precisely.
+    it('wins the race against the warn-tier rSquared check, not just the unusable-tier one', () => {
+      const verdict = assess({ ...GOOD, tooLong: true, rSquared: 0.97 })
+      expect(verdict).toEqual({
+        kind: 'unusable',
+        reason: 'tracking-lost',
+        message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.',
+      })
+    })
+
+    it('wins the race against the method-disagreement warn check', () => {
+      const verdict = assess({ ...GOOD, tooLong: true, flightTimeHeightCm: 61 })
+      expect(verdict).toEqual({
+        kind: 'unusable',
+        reason: 'tracking-lost',
+        message: 'Не удалось проследить движение — снимайте сбоку, целиком в кадре.',
+      })
     })
   })
 })
