@@ -31,3 +31,6 @@ tmp/
 
 # Superpowers scratch (SDD ledger, briefs, review packages)
 .superpowers/
+
+# MediaPipe runtime and model — fetched by scripts/fetch-mediapipe.mjs
+public/mediapipe/

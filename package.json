@@ -9,9 +9,13 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "demo": "vitest run --config vitest.demo.config.ts --disable-console-intercept"
+    "demo": "vitest run --config vitest.demo.config.ts --disable-console-intercept",
+    "fetch:mediapipe": "node scripts/fetch-mediapipe.mjs",
+    "predev": "node scripts/fetch-mediapipe.mjs",
+    "prebuild": "node scripts/fetch-mediapipe.mjs"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^1.0.0",
     "lucide-vue-next": "^0.563.0",
     "vue": "^3.5.24"
   },
