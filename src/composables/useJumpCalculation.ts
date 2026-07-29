@@ -1,4 +1,5 @@
 import { computed, ref, type Ref } from 'vue'
+import { frameAtTime } from '../lib/frameTiming'
 
 export type DisplayUnit = 'metric' | 'imperial'
 
@@ -17,12 +18,15 @@ export function useJumpCalculation(
 ) {
   const unit = ref<'metric' | 'imperial'>('metric')
 
+  // Same conversion the frame counter under the video uses. When these two
+  // disagreed, the frame the user marked was not the frame that was
+  // measured with.
   const takeoffFrame = computed(() =>
-    takeoffTime.value !== null ? Math.round(takeoffTime.value * fps.value) : null
+    takeoffTime.value !== null ? frameAtTime(takeoffTime.value, fps.value) : null
   )
 
   const landingFrame = computed(() =>
-    landingTime.value !== null ? Math.round(landingTime.value * fps.value) : null
+    landingTime.value !== null ? frameAtTime(landingTime.value, fps.value) : null
   )
 
   const flightTimeSeconds = computed(() => {

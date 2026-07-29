@@ -1,19 +1,12 @@
 import { ref, type Ref, watch } from 'vue'
+import { estimateFps, type FrameSample } from '../lib/fpsEstimate'
 
-const STANDARD_FPS = [24, 25, 30, 50, 60, 120, 240] as const
-
-function roundToStandardFps(rawFps: number): number {
-  let closest = 60
-  let minDiff = Infinity
-  for (const std of STANDARD_FPS) {
-    const diff = Math.abs(rawFps - std)
-    if (diff < minDiff) {
-      minDiff = diff
-      closest = std
-    }
-  }
-  return closest
-}
+/**
+ * How many `requestVideoFrameCallback` observations to collect. Twenty
+ * costs about a third of a second of muted playback at 60 fps and leaves
+ * the median plenty of intervals to discard stragglers from.
+ */
+const SAMPLES_NEEDED = 20
 
 export function useFpsDetection(
   videoRef: Ref<HTMLVideoElement | null>,
@@ -32,46 +25,55 @@ export function useFpsDetection(
     isDetecting.value = true
     detectedFps.value = null
 
-    const mediaTimes: number[] = []
-    const SAMPLES_NEEDED = 10
+    const samples: FrameSample[] = []
 
     const wasMuted = video.muted
     const originalTime = video.currentTime
 
     video.muted = true
 
+    /**
+     * Ends the run with whatever was collected. Called both on a full
+     * sample set and on `ended`, so a clip too short to reach
+     * SAMPLES_NEEDED settles instead of leaving `isDetecting` stuck true
+     * and blocking every later call.
+     */
+    function finish() {
+      video!.removeEventListener('ended', finish)
+
+      // A null estimate means the samples were unusable; leaving `fps` on
+      // its default beats overwriting it with a guess.
+      const estimated = estimateFps(samples)
+      if (estimated !== null) {
+        detectedFps.value = estimated
+        fps.value = estimated
+      }
+
+      video!.pause()
+      video!.muted = wasMuted
+      video!.currentTime = originalTime
+      isDetecting.value = false
+    }
+
     function onFrame(_now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) {
-      mediaTimes.push(metadata.mediaTime)
+      samples.push({
+        mediaTime: metadata.mediaTime,
+        presentedFrames: metadata.presentedFrames,
+      })
 
-      if (mediaTimes.length >= SAMPLES_NEEDED) {
-        const deltas: number[] = []
-        for (let i = 1; i < mediaTimes.length; i++) {
-          const delta = mediaTimes[i]! - mediaTimes[i - 1]!
-          if (delta > 0) deltas.push(delta)
-        }
-
-        if (deltas.length > 0) {
-          deltas.sort((a, b) => a - b)
-          const medianDelta = deltas[Math.floor(deltas.length / 2)]!
-          const rawFps = 1 / medianDelta
-          const rounded = roundToStandardFps(rawFps)
-          detectedFps.value = rounded
-          fps.value = rounded
-        }
-
-        video!.pause()
-        video!.muted = wasMuted
-        video!.currentTime = originalTime
-        isDetecting.value = false
+      if (samples.length >= SAMPLES_NEEDED) {
+        finish()
         return
       }
 
       video!.requestVideoFrameCallback(onFrame)
     }
 
+    video.addEventListener('ended', finish)
     video.requestVideoFrameCallback(onFrame)
     video.play().catch(() => {
       // Autoplay blocked — detection not possible
+      video.removeEventListener('ended', finish)
       video.muted = wasMuted
       isDetecting.value = false
     })

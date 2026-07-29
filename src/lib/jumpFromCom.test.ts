@@ -60,10 +60,11 @@ describe('analyseJump', () => {
 
   it('fits the airborne run trimmed by one frame at each end', () => {
     const result = analyseJump(generateJump(BASE).frames, VIDEO)!
-    // The airborne run is [takeoffFrame, landingFrame - 1] inclusive, i.e.
-    // landingFrame - takeoffFrame frames. One frame comes off each end, so the
-    // fit sees two fewer. This pins EDGE_TRIM_FRAMES: the noiseless track lies
-    // exactly on one parabola, so no height assertion can detect a change to it.
-    expect(result.flightFrames).toBe(result.landingFrame - result.takeoffFrame - 2)
+    // The airborne run is [takeoffSampleIndex, landingSampleIndex - 1]
+    // inclusive, i.e. landingSampleIndex - takeoffSampleIndex frames. One frame
+    // comes off each end, so the fit sees two fewer. This pins
+    // EDGE_TRIM_FRAMES: the noiseless track lies exactly on one parabola, so no
+    // height assertion can detect a change to it.
+    expect(result.flightFrames).toBe(result.landingSampleIndex - result.takeoffSampleIndex - 2)
   })
 })

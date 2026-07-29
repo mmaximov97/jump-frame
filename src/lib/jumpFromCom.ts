@@ -50,8 +50,19 @@ export interface JumpAnalysis {
   rSquared: number
   /** Frames that actually fed the parabola fit. */
   flightFrames: number
-  takeoffFrame: number
-  landingFrame: number
+  /**
+   * Sub-frame takeoff and landing instants, in seconds of playback time.
+   *
+   * These are the times to show a user or map onto a video frame number.
+   * The `*SampleIndex` fields below are emphatically not: the pipeline
+   * samples a fraction of the clip's frames, so index 135 of 197 samples is
+   * nowhere near video frame 135.
+   */
+  takeoffTime: number
+  landingTime: number
+  /** Indices into the sampled frame array — internal, for debugging. */
+  takeoffSampleIndex: number
+  landingSampleIndex: number
 }
 
 /**
@@ -115,8 +126,10 @@ function runAnalysis(frames: PoseFrame[], video: VideoSize): AnalysisRun {
     errorCm: ((2 * fit.rmsResidualPx) / Math.sqrt(fit.n) / fit.scalePxPerM) * 100,
     rSquared: fit.rSquared,
     flightFrames: fit.n,
-    takeoffFrame: phase.takeoffFrame,
-    landingFrame: phase.landingFrame,
+    takeoffTime,
+    landingTime,
+    takeoffSampleIndex: phase.takeoffFrame,
+    landingSampleIndex: phase.landingFrame,
   }
 
   return { failed: false, analysis, tooLong: flight.kind === 'too-long' }
