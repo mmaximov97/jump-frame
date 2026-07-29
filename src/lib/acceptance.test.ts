@@ -137,15 +137,27 @@ describe('acceptance: noise and failure modes', () => {
   // noiseSigma 0.005 itself reflects real MediaPipe landmark scatter is an
   // open question for PR-C to measure.
   //
-  // What a revert of each production fix does to these same 50 seeds:
-  // reverting footY from median back to max alone raises the mean to
-  // 1.7068 cm and drops the under-1cm count to 18 of 50 (36%) — fails both
-  // bounds below. Reverting both fixes (footY AND the linear-to-quadratic
-  // crossing fit) raises the mean to 2.0770 cm and the count to 10 of 50
-  // (20%) — fails both bounds by a wider margin still. Either regression is
-  // caught by this test; neither would have been caught by a worst-of-5
-  // assertion, however tight.
-  it('keeps landmark-noise error to a 1.5 cm mean, most draws under 1 cm, across 50 seeds at sigma 0.005', () => {
+  // RE-MEASURED, and the fixture below it is the one that now carries the
+  // argument. This one has no leg tuck, and that turned out to matter more
+  // than anything else this comment used to discuss: a takeoff-edge fit
+  // window that reaches further forward keeps improving on a tuck-free
+  // parabola and starts fitting muscle instead of gravity on a real one.
+  // Tuning against this fixture alone therefore pushes the window in exactly
+  // the wrong direction for real footage, where every vertical jump tucks.
+  //
+  // Measured across the takeoff fit window, 50 seeds at sigma 0.005, mean
+  // error on each fixture (window: no-tuck / tucked):
+  //   4 -> 2.356 / 1.179     6 -> 1.567 / 1.416
+  //   5 -> 1.888 / 1.242     7 -> 1.317 / 1.536
+  // The two orderings are opposite. The window is set from the tucked
+  // column.
+  //
+  // Current pipeline on the two fixtures: no-tuck mean 2.356, 13 of 50 under
+  // 1 cm; tucked mean 1.179, 25 of 50. The pipeline before the local-floor
+  // and clamp fixes measured almost the mirror image — no-tuck 1.202 and 28
+  // of 50, tucked 2.326 and 8 of 50 — i.e. it was twice as accurate on the
+  // fixture that omits the tuck and half as accurate on the one that has it.
+  it('keeps tuck-free landmark-noise error to a 2.9 cm mean across 50 seeds at sigma 0.005', () => {
     const errors: number[] = []
     for (let seed = 1; seed <= 50; seed++) {
       const result = analyseJump(
@@ -154,9 +166,31 @@ describe('acceptance: noise and failure modes', () => {
       errors.push(Math.abs(result.comHeightCm - 50))
     }
     const mean = errors.reduce((a, b) => a + b, 0) / errors.length
+    // 2.356 measured, 23% headroom. A drift alarm on an unrepresentative
+    // fixture — deliberately loose, because tightening it would pull the fit
+    // window the wrong way. The assertion that constrains the window is the
+    // tucked one below.
+    expect(mean).toBeLessThan(2.9)
+    expect(errors.filter((e) => e < 1).length).toBeGreaterThanOrEqual(10)
+  })
+
+  // The fixture that represents a real vertical jump: landmark noise AND the
+  // leg tuck every jumper does on the way up. This is the assertion that
+  // governs the takeoff fit window.
+  it('keeps tucked landmark-noise error to a 1.5 cm mean, half the draws under 1 cm', () => {
+    const errors: number[] = []
+    for (let seed = 1; seed <= 50; seed++) {
+      const result = analyseJump(
+        generateJump({ ...BASE, noiseSigma: 0.005, tuckM: 0.25, seed }).frames, VIDEO
+      )!
+      errors.push(Math.abs(result.comHeightCm - 50))
+    }
+    const mean = errors.reduce((a, b) => a + b, 0) / errors.length
     const under1cm = errors.filter((e) => e < 1).length
+    // 1.179 measured (27% headroom); the pre-fix pipeline measures 2.326
+    // here and 8 under 1 cm, so both bounds catch a revert of it.
     expect(mean).toBeLessThan(1.5)
-    expect(under1cm).toBeGreaterThanOrEqual(22)
+    expect(under1cm).toBeGreaterThanOrEqual(20)
   })
 
   // Was timeScale: 2 (1.277s apparent flight against the 1.5s

@@ -61,6 +61,23 @@ export type FlightPhaseOutcome =
 
 /** The foot is on the ground most of the clip, so a high percentile is the floor. */
 const FLOOR_PERCENTILE = 0.9
+/**
+ * How many frames of standing to average when measuring the floor local to
+ * one edge of the jump, and how many to skip next to the jump itself.
+ *
+ * The gap exists because the frames immediately before takeoff are a
+ * countermovement dip and the ones right after landing are a settle — both
+ * are off the standing level, in opposite directions.
+ */
+const FLOOR_WINDOW_FRAMES = 20
+const FLOOR_WINDOW_GAP = 4
+/** Below this many frames a window is too short to average; use the global floor. */
+const MIN_FLOOR_WINDOW_FRAMES = 5
+/**
+ * How far before the first airborne frame a fitted takeoff may land and
+ * still be believed. See the takeoff block in findFlightPhase.
+ */
+const TAKEOFF_LOOKBACK_FRAMES = 2
 /** Airborne once the foot clears this fraction of the person's own height. */
 const AIRBORNE_THRESHOLD_FRACTION = 0.02
 /**
@@ -296,6 +313,26 @@ function quadraticCrossing(
   return inBounds.reduce((closest, t) => (Math.abs(t - anchor) < Math.abs(closest - anchor) ? t : closest))
 }
 
+/**
+ * The linear crossing, returned only if it lands inside `bounds` — null
+ * otherwise, rather than clamped onto the boundary.
+ *
+ * Clamping is what let a foot still on the ground be reported as airborne:
+ * an extrapolation that misses its window by three frames is not evidence
+ * about that window, and pinning it to the edge dresses a rejected estimate
+ * up as a measurement. The caller falls back to the frame midpoint instead.
+ */
+function linearCrossingInBounds(
+  times: number[], footY: number[], indices: number[], floorY: number,
+  bounds: [number, number]
+): number | null {
+  const line = fitLine(indices.map((i) => times[i]!), indices.map((i) => footY[i]!))
+  if (!line || line.b === 0) return null
+  const t = (floorY - line.a) / line.b
+  if (!Number.isFinite(t) || t < bounds[0] || t > bounds[1]) return null
+  return t
+}
+
 /** The linear crossing estimate — the original method, kept as the fallback. */
 function linearCrossing(
   times: number[], footY: number[], indices: number[], floorY: number, fallback: number,
@@ -340,6 +377,27 @@ function crossingTime(
   return linearCrossing(times, footY, indices, floorY, fallback, bounds)
 }
 
+/**
+ * The standing foot level over `[from, to)`, or `fallback` when that window
+ * is too short to average.
+ *
+ * A single floor for the whole clip is wrong whenever the athlete does not
+ * finish standing exactly where they started, which is most jumps. Measured
+ * on a real clip: the pre-takeoff standing level was 874.3 px, the
+ * post-landing level 891.4 px, and the 90th-percentile floor over the whole
+ * clip 887.8 px — nearly the post-landing value, because the athlete spends
+ * longer standing after the jump than before it. Against that global floor
+ * the takeoff threshold (0.02 of stature, 14.2 px there) had only 2 px of
+ * its 14.2 left once the 12 px offset was subtracted, and fired about two
+ * frames early. Each edge gets the floor from its own side instead.
+ */
+function localFloor(footY: number[], from: number, to: number, fallback: number): number {
+  const lo = Math.max(0, from)
+  const hi = Math.min(footY.length, to)
+  if (hi - lo < MIN_FLOOR_WINDOW_FRAMES) return fallback
+  return percentile(footY.slice(lo, hi).sort((a, b) => a - b), 0.5)
+}
+
 export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   const { times, footY, staturePx } = track
   // times.length !== footY.length should never happen — buildComTrack pushes
@@ -370,52 +428,125 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   }
   if (bestStart === -1) return { kind: 'no-flight' }
 
-  const takeoffFrame = bestStart
-  const landingFrame = bestStart + bestLength
+  const coarseTakeoff = bestStart
+  const coarseLanding = bestStart + bestLength
+  if (coarseLanding >= times.length) return { kind: 'landing-past-end' }
+
+  // Re-derive each boundary against the standing level on its own side. The
+  // global floor above is kept for WHICH run is the jump — a question the
+  // whole clip answers better than either end of it.
+  const takeoffFloorY = localFloor(
+    footY, coarseTakeoff - FLOOR_WINDOW_GAP - FLOOR_WINDOW_FRAMES, coarseTakeoff - FLOOR_WINDOW_GAP,
+    floorY
+  )
+  const landingFloorY = localFloor(
+    footY, coarseLanding + FLOOR_WINDOW_GAP, coarseLanding + FLOOR_WINDOW_GAP + FLOOR_WINDOW_FRAMES,
+    floorY
+  )
+
+  // A stricter floor moves the boundary inwards, a looser one outwards, so
+  // each edge walks in whichever direction its own floor requires.
+  let takeoffFrame = coarseTakeoff
+  while (takeoffFrame < coarseLanding && !(takeoffFloorY - footY[takeoffFrame]! > threshold)) {
+    takeoffFrame++
+  }
+  while (takeoffFrame > 1 && takeoffFloorY - footY[takeoffFrame - 1]! > threshold) takeoffFrame--
+  if (takeoffFrame >= coarseLanding) return { kind: 'no-flight' }
+
+  let landingFrame = coarseLanding
+  while (landingFrame > takeoffFrame + 1 && !(landingFloorY - footY[landingFrame - 1]! > threshold)) {
+    landingFrame--
+  }
+  while (landingFrame < times.length && landingFloorY - footY[landingFrame]! > threshold) {
+    landingFrame++
+  }
   if (landingFrame >= times.length) return { kind: 'landing-past-end' }
 
   const leading = Array.from(
-    { length: Math.min(EDGE_FIT_FRAMES, bestLength) },
+    { length: Math.min(EDGE_FIT_FRAMES, landingFrame - takeoffFrame) },
     (_, k) => takeoffFrame + k
   )
   const trailing = Array.from(
-    { length: Math.min(EDGE_FIT_FRAMES, bestLength) },
+    { length: Math.min(EDGE_FIT_FRAMES, landingFrame - takeoffFrame) },
     (_, k) => landingFrame - 1 - k
   ).reverse()
 
-  // The coarse threshold can lag the true takeoff/landing split by about a
-  // frame (see MAX_BOUNDARY_EXTENSION); reclaim any adjacent frame that is
+  // The coarse threshold can lag the true landing split by about a frame
+  // (see MAX_BOUNDARY_EXTENSION); reclaim any adjacent frame that is
   // actually part of the flight before fitting and clamping. This always
   // runs, even for a run already far past MAX_FLIGHT_SECONDS: the too-long
   // case still needs a fully-resolved phase to hand downstream (see
   // FlightPhaseOutcome), and extension's own cost is bounded by
   // EDGE_FIT_FRAMES + MAX_BOUNDARY_EXTENSION regardless of how long the
   // airborne run is.
-  const leadingExtended = extendBoundary(times, footY, floorY, threshold, leading, -1, -1)
-  const trailingExtended = extendBoundary(times, footY, floorY, threshold, trailing, 1, times.length - 1)
+  const trailingExtended = extendBoundary(
+    times, footY, landingFloorY, threshold, trailing, 1, times.length - 1
+  )
 
-  const finalTakeoffFrame = leadingExtended[0]!
+  const finalTakeoffFrame = takeoffFrame
   const finalLandingFrame = trailingExtended[trailingExtended.length - 1]! + 1
 
-  // Extension only ever pulls the takeoff boundary earlier and/or the
-  // landing boundary later, so it can only grow the reported duration
-  // relative to the coarse pre-extension run — this final figure, not the
-  // coarse one, is what MAX_FLIGHT_SECONDS below is checked against.
   const finalDuration = times[finalLandingFrame]! - times[finalTakeoffFrame]!
 
-  // finalTakeoffFrame can reach 0 two different ways: the coarse run
-  // genuinely started on the clip's first frame (nothing to extrapolate
-  // from), or extension walked a reclaimed boundary all the way down to 0.
-  // Either way there is no frame -1 to fit a contact anchor from, so the
-  // sub-frame estimate is discarded in favour of times[0] — a wrongly
-  // reclaimed frame 0 therefore costs a full frame of precision, not a
-  // fraction of one.
+  // Takeoff: a ballistic fit when the foot's trajectory actually supports
+  // one, and the midpoint of the containing frame interval when it does not.
+  // What it never does any more is CLAMP a rejected extrapolation onto the
+  // interval boundary.
+  //
+  // The extrapolation assumes the foot is ballistic the moment it leaves the
+  // ground. Off a real takeoff it is not: the ankle is still plantarflexing,
+  // so the foot barely moves for a frame and then accelerates. Measured on a
+  // real clip (footY at the first three airborne frames: 850.7, 851.1,
+  // 836.7) the quadratic was rejected at every window size from 3 to 5 —
+  // c2 came out non-positive, i.e. not a ballistic arc at all — and the
+  // linear fallback extrapolated 1.5 to 3 frames before the last contact
+  // frame. Clamping turned each of those into the interval's lower bound and
+  // reported it as a sub-frame measurement, which is how a foot still on the
+  // ground came to be timed as airborne. Falling back to the midpoint
+  // instead put takeoff at frame 144.45, against 144.5 read off the video
+  // frame by frame; the clamped extrapolation gave 143.95 at best.
+  //
+  // No extendBoundary on this edge. On the same clip it reclaimed the frame
+  // the video shows still in contact — its clearance guard passed (11.3 px
+  // of 14.2) and the frame did sit near the fitted line, because a foot
+  // rolling onto the toes is moving, just not airborne.
+  //
+  // The landing keeps both its extension and its extrapolation, and that
+  // asymmetry is physical rather than a compromise: nothing actuates the
+  // foot on the way down, so it really is ballistic into contact. Measured
+  // on the same clip, landing came out 179.79 against ~180 from the video.
+  // The window the fit is allowed to land in reaches TAKEOFF_LOOKBACK_FRAMES
+  // back, not one. The airborne threshold is a displacement, so the foot
+  // needs time to clear it: at 0.02 of stature and a 0.5 m jump's takeoff
+  // speed that is about 0.7 of a frame at 60 fps, and wherever takeoff falls
+  // inside its own frame the true instant can sit more than a frame before
+  // the first frame that clears. A one-frame window rejected those and fell
+  // back to the midpoint, costing 5 cm on fixtures whose foot is genuinely
+  // ballistic. Widening the window is not the same as reclassifying frames
+  // as airborne (what extendBoundary did, and what pulled a still-planted
+  // foot into the flight on real footage) — it only decides which fitted
+  // answers are admissible.
+  // Two tiers of trust. A quadratic that fitParabola accepted has actually
+  // demonstrated a ballistic arc, so it may reach the full lookback back. A
+  // linear chord has demonstrated nothing beyond a direction of travel, so it
+  // may only reach one frame — enough to keep it useful where the quadratic
+  // is rejected by noise, not enough to let it place takeoff before a foot
+  // that is still pushing off. On the real clip its answers (1.5 to 3 frames
+  // early) fall outside the one-frame window and are discarded.
+  const takeoffFit = finalTakeoffFrame === 0
+    ? null
+    : quadraticCrossing(times, footY, leading, takeoffFloorY,
+        [times[Math.max(0, finalTakeoffFrame - TAKEOFF_LOOKBACK_FRAMES)]!,
+         times[finalTakeoffFrame]!], true)
+      ?? linearCrossingInBounds(times, footY, leading, takeoffFloorY,
+        [times[finalTakeoffFrame - 1]!, times[finalTakeoffFrame]!])
+
   const takeoffTime = finalTakeoffFrame === 0
     ? times[0]!
-    : crossingTime(times, footY, leadingExtended, floorY, times[finalTakeoffFrame]!,
-        [times[finalTakeoffFrame - 1]!, times[finalTakeoffFrame]!], true)
+    : takeoffFit ?? (times[finalTakeoffFrame - 1]! + times[finalTakeoffFrame]!) / 2
 
-  const landingTime = crossingTime(times, footY, trailingExtended, floorY, times[finalLandingFrame]!,
+  const landingTime = crossingTime(times, footY, trailingExtended, landingFloorY,
+    times[finalLandingFrame]!,
     [times[finalLandingFrame - 1]!, times[finalLandingFrame]!], false)
 
   const phase: FlightPhase = {

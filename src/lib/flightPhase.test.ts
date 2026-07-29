@@ -104,20 +104,23 @@ describe('findFlightPhase', () => {
     expect(phase.takeoffTime).toBe(0)
   })
 
-  it('extension reaches but never crosses the array boundary on either edge', () => {
-    // Takeoff edge: frame 0 sits exactly on the line fitted through frames
-    // 1-4 (a perfectly linear synthetic descent), so it is a legitimate
-    // reclassification target. The coarse run starts at frame 1; extension
-    // should walk it down to frame 0 and stop there — never attempting a
-    // frame -1. A frontier off by one in the restrictive direction (e.g. 0
-    // instead of -1) would refuse the reclassification and leave
-    // takeoffFrame at 1 instead of 0.
-    const leadingPhase = phaseOf(findFlightPhase(
-      track([92, 79, 66, 53, 40, 100, 100])
-    ))
-    expect(leadingPhase.takeoffFrame).toBe(0)
-    expect(leadingPhase.takeoffTime).toBe(0)
+  it('never reclassifies a contact frame as airborne at the takeoff edge', () => {
+    // This used to assert the opposite: extension walked the takeoff
+    // boundary down onto frame 0 because frame 0 sat on the line fitted
+    // through frames 1-4. On real footage that same reclassification pulled
+    // in a frame the video shows still in contact — a foot rolling onto the
+    // toes is moving, and so looks like it belongs on the flight line,
+    // without being airborne. Extension no longer runs on this edge; the
+    // takeoff boundary is whatever the local floor says it is.
+    const phase = phaseOf(findFlightPhase(track([92, 79, 66, 53, 40, 100, 100])))
+    // floorY is 100, threshold 10, so frame 0 (92, only 8 clear) is contact
+    // and frame 1 (79) is the first airborne frame.
+    expect(phase.takeoffFrame).toBe(1)
+    expect(phase.takeoffTime).toBeGreaterThanOrEqual(0)
+    expect(phase.takeoffTime).toBeLessThanOrEqual(1 / 60)
+  })
 
+  it('landing extension reaches but never crosses the array boundary', () => {
     // Landing edge: frame 5 is the array's last frame and sits exactly on
     // the line fitted through frames 1-4, so it looks reclaimable too — but
     // there is no frame after it to serve as the reported landingFrame. The

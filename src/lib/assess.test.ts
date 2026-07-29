@@ -296,22 +296,31 @@ describe('measureJump', () => {
 // a future change that lets a pathological case slip through fails loudly;
 // it needed no changes, since it re-derives its own grid fresh each run.
 //
-// Invalidated a third time, by the disagreement cutoff moving from 0.2 to
-// 0.1: the pinned scenario stopped overshooting (39.72 cm against the 54 cm
-// the assertion demanded) and again exercised nothing. Re-swept and
-// re-pinned below — this time ranking
-// candidates by the correct metric, which the two earlier re-pins got wrong
-// (see the fixture's own comment). The recurrence is the point worth
-// noticing: a fixture pinned to one scenario's exact numbers is invalidated
-// by every accuracy improvement, and has now cost three re-pins. The second
-// test, which re-derives its grid each run, has survived all three untouched.
+// Invalidated a third time by the disagreement cutoff moving from 0.2 to
+// 0.1, and a fourth by flightPhase's local floors and the removal of the
+// takeoff clamp — each time the pinned scenario stopped overshooting and so
+// stopped exercising anything. Re-swept and re-pinned below, now ranking
+// candidates by the correct metric, which all three earlier re-pins got
+// wrong (see the fixture's own comment).
+//
+// The recurrence is the point worth noticing. A fixture pinned to one
+// scenario's exact numbers is invalidated by every accuracy improvement, and
+// has now cost four re-pins; the second test in this block, which re-derives
+// its grid fresh each run, has survived all four untouched and covers the
+// same ground. The pinned one is now sitting on a 0.3% margin (see below).
+// If a fifth accuracy fix knocks it off, delete it rather than re-pin it —
+// it is not earning its maintenance.
+//
+// Worth recording from the latest sweep: pathological cases are down to 127
+// per 50,000 scenarios, from 390 before these fixes and 1,087 originally.
+// The pipeline overshoots far less often, not just less far.
 describe('assess catches the parabola-extrapolation failure mode (Task 6)', () => {
   it('does not pass the closest near-miss found by the sweep', () => {
-    // jumpHeightM 0.03, fps 30, noiseSigma 0.01, tuckM 0.1, seed 4,
-    // takeoffPhase 0.8: reported height 9.49 cm against a 3 cm truth
-    // (3.163x). Note the 3x assertion below clears by only 5% here — this
-    // fixture sits near the pathological cutoff itself, which is what makes
-    // it the closest call.
+    // jumpHeightM 0.03, fps 24, noiseSigma 0.007, tuckM 0.1, seed 7,
+    // takeoffPhase 0.6: reported height 9.03 cm against a 3 cm truth
+    // (3.009x). The 3x assertion below clears by 0.3% — this fixture sits
+    // right on the pathological cutoff, which is both what makes it the
+    // closest call and why it keeps needing re-pinning.
     //
     // "Closest" is now measured properly, which the previous two versions of
     // this fixture were not. Escaping requires passing EVERY guard, so a
@@ -321,23 +330,22 @@ describe('assess catches the parabola-extrapolation failure mode (Task 6)', () =
     // are nowhere near escaping, because the guard with the thinnest margin
     // is rarely the binding one.
     //
-    // Re-swept 50,000 scenarios against the current pipeline (disagreement
-    // cutoff 0.1): 390 pathological, zero survivors. This case's failing
-    // guards are flightFrames 6 (shortfall 0.25 of the 8-frame minimum),
-    // rSquared 0.7840 (0.175 below its cutoff in relative terms) and
-    // statureM 2.658 (0.208 above the 2.2 ceiling). Its worst guard is
-    // therefore 0.25 away from passing, and no pathological case in the grid
-    // came closer than that — a far wider margin than the 0.0398 the
-    // previous fixture recorded, though the two numbers are not comparable,
-    // being different metrics.
+    // Re-swept 50,000 scenarios against the current pipeline: 127
+    // pathological, zero survivors. Only TWO guards fail on this case —
+    // flightFrames 3 (shortfall 0.625 of the 8-frame minimum) and
+    // disagreement 0.1522 (0.52 past the 0.1 cutoff). Its rSquared is
+    // exactly 1 and its statureM 1.718 sits inside the 1.3-2.2 band, so
+    // neither of those helps here.
     //
-    // Its disagreement is only 0.0158, i.e. the new 0.1 cutoff is NOT what
-    // catches this one. That is expected: the disagreement guard exists for
-    // mistimed takeoffs, not for the fit blowing up.
+    // That makes this case direct evidence for the disagreement cutoff
+    // change: at the old 0.2 its 0.1522 would have passed, leaving
+    // flightFrames as the single guard between a 3 cm jump and a 9 cm
+    // reading. Its worst failing guard is 0.625 from passing, and nothing in
+    // the grid came closer.
     const clip = generateJump({
-      jumpHeightM: 0.03, scalePxPerM: 400, fps: 30,
+      jumpHeightM: 0.03, scalePxPerM: 400, fps: 24,
       videoWidth: VIDEO.width, videoHeight: VIDEO.height,
-      noiseSigma: 0.01, tuckM: 0.1, seed: 4, takeoffPhase: 0.8,
+      noiseSigma: 0.007, tuckM: 0.1, seed: 7, takeoffPhase: 0.6,
     })
     const result = analyseJump(clip.frames, VIDEO)
     expect(result).not.toBeNull()
