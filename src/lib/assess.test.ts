@@ -78,11 +78,18 @@ describe('assess', () => {
     expect(verdict.kind === 'warn' && verdict.reason).toBe('tracking-lost')
   })
 
-  it('warns when the two methods disagree by more than a fifth', () => {
-    const disagree = assess({ ...GOOD, flightTimeHeightCm: 61 })
+  it('warns when the two methods disagree by more than a tenth', () => {
+    // comHeightCm is 50, so the cutoff sits at 5 cm of disagreement.
+    const disagree = assess({ ...GOOD, flightTimeHeightCm: 56 })
     expect(disagree.kind).toBe('warn')
     expect(disagree.kind === 'warn' && disagree.reason).toBe('pose-asymmetry')
-    expect(assess({ ...GOOD, flightTimeHeightCm: 59 }).kind).toBe('ok')
+    expect(assess({ ...GOOD, flightTimeHeightCm: 54 }).kind).toBe('ok')
+    // Exactly at the cutoff passes — the comparison is strict.
+    expect(assess({ ...GOOD, flightTimeHeightCm: 55 }).kind).toBe('ok')
+    // The value the real clip that motivated this threshold produced: 58.7
+    // com against 51.4 flight-time, 12.4% apart. The previous 0.2 passed it
+    // as 'ok' while the takeoff was 3.5 frames early.
+    expect(assess({ ...GOOD, comHeightCm: 58.7, flightTimeHeightCm: 51.4 }).kind).toBe('warn')
   })
 
   it('lets the earlier check win when two unusable-tier guards both fire', () => {
@@ -288,29 +295,54 @@ describe('measureJump', () => {
 // pinned below. The second test re-runs a smaller slice of the same grid so
 // a future change that lets a pathological case slip through fails loudly;
 // it needed no changes, since it re-derives its own grid fresh each run.
+//
+// Invalidated a third time, by the disagreement cutoff moving from 0.2 to
+// 0.1: the pinned scenario stopped overshooting (39.72 cm against the 54 cm
+// the assertion demanded) and again exercised nothing. Re-swept and
+// re-pinned below — this time ranking
+// candidates by the correct metric, which the two earlier re-pins got wrong
+// (see the fixture's own comment). The recurrence is the point worth
+// noticing: a fixture pinned to one scenario's exact numbers is invalidated
+// by every accuracy improvement, and has now cost three re-pins. The second
+// test, which re-derives its grid each run, has survived all three untouched.
 describe('assess catches the parabola-extrapolation failure mode (Task 6)', () => {
   it('does not pass the closest near-miss found by the sweep', () => {
-    // jumpHeightM 0.18, fps 25, noiseSigma 0.01, tuckM 0, seed 4,
-    // takeoffPhase 0.6: analyseJump's rSquared comes out 0.910239..., 0.0398
-    // below the 0.95 cutoff — the closest any pathological case in the
-    // re-swept grid came to slipping past this guard. That margin is wider
-    // than the original fixture's 0.00052, consistent with the two accuracy
-    // fixes making pathological cases less marginal generally, not just
-    // less frequent (646 pathological here vs 1,087 before, across
-    // comparably-sized grids). Reported height 55.54cm against an 18cm
-    // truth (3.09x). Caught anyway: statureM comes out 3.297, outside the
-    // 1.3-2.2 band, so even a hair's shift in rSquared would still be
-    // caught downstream — the same double-guard property the original
-    // fixture had.
+    // jumpHeightM 0.03, fps 30, noiseSigma 0.01, tuckM 0.1, seed 4,
+    // takeoffPhase 0.8: reported height 9.49 cm against a 3 cm truth
+    // (3.163x). Note the 3x assertion below clears by only 5% here — this
+    // fixture sits near the pathological cutoff itself, which is what makes
+    // it the closest call.
+    //
+    // "Closest" is now measured properly, which the previous two versions of
+    // this fixture were not. Escaping requires passing EVERY guard, so a
+    // case's distance from escaping is set by whichever failing guard is
+    // FURTHEST from passing — the maximum, not the minimum. Ranking by the
+    // rSquared margin alone (what the earlier sweeps did) picks cases that
+    // are nowhere near escaping, because the guard with the thinnest margin
+    // is rarely the binding one.
+    //
+    // Re-swept 50,000 scenarios against the current pipeline (disagreement
+    // cutoff 0.1): 390 pathological, zero survivors. This case's failing
+    // guards are flightFrames 6 (shortfall 0.25 of the 8-frame minimum),
+    // rSquared 0.7840 (0.175 below its cutoff in relative terms) and
+    // statureM 2.658 (0.208 above the 2.2 ceiling). Its worst guard is
+    // therefore 0.25 away from passing, and no pathological case in the grid
+    // came closer than that — a far wider margin than the 0.0398 the
+    // previous fixture recorded, though the two numbers are not comparable,
+    // being different metrics.
+    //
+    // Its disagreement is only 0.0158, i.e. the new 0.1 cutoff is NOT what
+    // catches this one. That is expected: the disagreement guard exists for
+    // mistimed takeoffs, not for the fit blowing up.
     const clip = generateJump({
-      jumpHeightM: 0.18, scalePxPerM: 400, fps: 25,
+      jumpHeightM: 0.03, scalePxPerM: 400, fps: 30,
       videoWidth: VIDEO.width, videoHeight: VIDEO.height,
-      noiseSigma: 0.01, tuckM: 0, seed: 4, takeoffPhase: 0.6,
+      noiseSigma: 0.01, tuckM: 0.1, seed: 4, takeoffPhase: 0.8,
     })
     const result = analyseJump(clip.frames, VIDEO)
     expect(result).not.toBeNull()
     const analysis = result!
-    expect(analysis.comHeightCm).toBeGreaterThan(3 * 18)
+    expect(analysis.comHeightCm).toBeGreaterThan(3 * 3)
     expect(assess({ ...analysis, tooLong: false }).kind).toBe('unusable')
   })
 

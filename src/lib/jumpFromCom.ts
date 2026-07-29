@@ -217,7 +217,24 @@ const MIN_USABLE_R_SQUARED = 0.95
 const MIN_CLEAN_R_SQUARED = 0.99
 const MIN_STATURE_M = 1.3
 const MAX_STATURE_M = 2.2
-const MAX_METHOD_DISAGREEMENT = 0.2
+/**
+ * How far the com height and the flight-time height may drift apart before
+ * the result is flagged.
+ *
+ * This is the pipeline's only detector for an error in the takeoff instant.
+ * The two methods are not independent — both consume the same `takeoffTime` —
+ * but they consume it at different rates: the com height moves 3.4 mm per
+ * millisecond of takeoff error and the flight-time height only 1.6, so a
+ * mistimed takeoff pushes them apart at roughly 1.8 mm/ms even though a
+ * correct one leaves them agreeing.
+ *
+ * Measured on the real clip that motivated the toe-timing fix: with the
+ * takeoff 3.5 frames early the two read 58.7 and 51.4 cm — 12.4 % apart,
+ * which the previous 0.2 let through silently as 'ok'. With the takeoff
+ * correct they land within 1-3 cm of each other (2-7 %). 0.1 sits between
+ * those two populations.
+ */
+const MAX_METHOD_DISAGREEMENT = 0.1
 
 /**
  * Decides what the user is shown: a number, a number with a caveat, or a
