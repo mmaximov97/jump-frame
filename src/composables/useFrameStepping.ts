@@ -11,7 +11,21 @@ export function useFrameStepping(
   pause: () => void
 ) {
   const frameTime = computed(() => 1 / fps.value)
-  const currentFrame = computed(() => Math.floor(currentTime.value * fps.value))
+
+  /**
+   * Rounds rather than floors, for two reasons.
+   *
+   * A seek lands `currentTime` a hair *below* the frame boundary it snapped
+   * to — a 240 fps clip stepped to frame 5 reports 0.02083, and 0.02083 * 240
+   * is 4.9992, which floors to 4. The counter under the video sat one frame
+   * behind the frame actually on screen, and stayed behind for every step.
+   *
+   * It also disagreed with the arithmetic: useJumpCalculation rounds when it
+   * turns marker times into frame numbers, so the badge and the "Frames"
+   * figure in the results card described the same instant with different
+   * numbers.
+   */
+  const currentFrame = computed(() => Math.round(currentTime.value * fps.value))
 
   let holdTimeout: ReturnType<typeof setTimeout> | null = null
   let repeatInterval: ReturnType<typeof setInterval> | null = null
