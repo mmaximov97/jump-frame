@@ -2,13 +2,10 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ArrowLeft, CircleQuestionMark } from 'lucide-vue-next'
 import { useVideoPlayer } from './composables/useVideoPlayer'
-import { useFpsDetection } from './composables/useFpsDetection'
-import { useFrameStepping } from './composables/useFrameStepping'
-import { useMarkers } from './composables/useMarkers'
-import { useJumpCalculation, cmToUnit, unitLabel } from './composables/useJumpCalculation'
+import { cmToUnit, unitLabel } from './composables/useJumpCalculation'
+import { useMeasurement } from './composables/useMeasurement'
 import { useJumpHistory } from './composables/useJumpHistory'
 import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
-import { usePoseDetection } from './composables/usePoseDetection'
 import { frameAtTime } from './lib/frameTiming'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
@@ -31,8 +28,6 @@ function onDesktopQueryChange(e: MediaQueryListEvent) {
   isDesktop.value = e.matches
 }
 
-const fps = ref(60)
-
 const {
   videoRef,
   videoSrc,
@@ -46,27 +41,20 @@ const {
   seekTo,
 } = useVideoPlayer()
 
-useFpsDetection(videoRef, isVideoLoaded, fps)
-
 const {
+  fps,
   currentFrame,
   startStepForwardHold,
   startStepBackwardHold,
   stopHold,
   stepForward,
   stepBackward,
-} = useFrameStepping(videoRef, fps, currentTime, duration, pause)
-
-const {
   takeoffTime,
   landingTime,
   hasValidMarkers,
   setTakeoff,
   setLanding,
   clearMarkers,
-} = useMarkers()
-
-const {
   unit,
   takeoffFrame,
   landingFrame,
@@ -75,13 +63,9 @@ const {
   displayHeight,
   displayError,
   setUnit,
-} = useJumpCalculation(takeoffTime, landingTime, fps)
-
-const pose = usePoseDetection(videoRef, fps)
-
-const hasAnyMarker = computed(
-  () => takeoffTime.value !== null || landingTime.value !== null
-)
+  pose,
+  hasAnyMarker,
+} = useMeasurement(videoRef, isVideoLoaded, currentTime, duration, pause)
 
 const resultsAnchor = ref<HTMLElement | null>(null)
 const videoPlayer = ref<InstanceType<typeof VideoPlayer> | null>(null)
