@@ -70,7 +70,7 @@ export interface JumpAnalysis {
  * frames sit closest to contact and are the likeliest to carry motion blur or
  * a lingering trace of the foot still loaded.
  */
-const EDGE_TRIM_FRAMES = 1
+export const EDGE_TRIM_FRAMES = 1
 
 /**
  * The full result of running the pipeline on one clip: either a usable
