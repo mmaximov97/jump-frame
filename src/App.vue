@@ -9,6 +9,7 @@ import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
 import { frameAtTime } from './lib/frameTiming'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
+import PoseOverlay from './components/PoseOverlay.vue'
 import Timeline from './components/Timeline.vue'
 import FrameControls from './components/FrameControls.vue'
 import MarkerControls from './components/MarkerControls.vue'
@@ -64,6 +65,9 @@ const {
   displayError,
   setUnit,
   pose,
+  analysis,
+  canShowHeight,
+  replay,
   hasAnyMarker,
 } = useMeasurement(videoRef, isVideoLoaded, currentTime, duration, pause)
 
@@ -127,6 +131,7 @@ function onFileSelected(file: File) {
 }
 
 function startNewVideo() {
+  replay.stop()
   history.finalizeDraft()
   // usePoseDetection aborts a scan of the outgoing video on its own (it
   // watches videoRef), but it deliberately never moves `status` off
@@ -153,6 +158,7 @@ function openShareCard() {
 }
 
 function onTimelineSeek(time: number) {
+  replay.stop()
   seekTo(time)
 }
 
@@ -160,9 +166,11 @@ function onKeydown(e: KeyboardEvent) {
   if (!isVideoLoaded.value || showShareCard.value) return
   if (e.key === 'ArrowLeft') {
     e.preventDefault()
+    replay.stop()
     stepBackward()
   } else if (e.key === 'ArrowRight') {
     e.preventDefault()
+    replay.stop()
     stepForward()
   } else if (e.key === '+' || e.key === '=') {
     e.preventDefault()
@@ -259,7 +267,18 @@ onUnmounted(() => {
       <div class="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
         <!-- Video + playback controls -->
         <div class="flex-1 min-h-0 flex flex-col">
-          <VideoPlayer ref="videoPlayer" :src="videoSrc" @video-ref="setVideoRef" />
+          <VideoPlayer ref="videoPlayer" :src="videoSrc" @video-ref="setVideoRef">
+            <template #overlay>
+              <PoseOverlay
+                :frames="pose.frames.value"
+                :analysis="analysis"
+                :video-size="{ width: videoRef?.videoWidth ?? 0, height: videoRef?.videoHeight ?? 0 }"
+                :video-el="videoRef"
+                :fps="fps"
+                :show-height="canShowHeight"
+              />
+            </template>
+          </VideoPlayer>
           <Timeline
             v-if="isVideoLoaded"
             :duration="duration"
@@ -267,7 +286,7 @@ onUnmounted(() => {
             :takeoff-time="takeoffTime"
             :landing-time="landingTime"
             :video-el="videoRef"
-            @drag-start="pause"
+            @drag-start="replay.stop(); pause()"
             @seek="onTimelineSeek"
           />
           <FrameControls
@@ -275,9 +294,9 @@ onUnmounted(() => {
             :is-playing="isPlaying"
             :current-time="currentTime"
             :current-frame="currentFrame"
-            @toggle-play="togglePlayPause"
-            @step-forward-hold="startStepForwardHold"
-            @step-backward-hold="startStepBackwardHold"
+            @toggle-play="replay.stop(); togglePlayPause()"
+            @step-forward-hold="replay.stop(); startStepForwardHold()"
+            @step-backward-hold="replay.stop(); startStepBackwardHold()"
             @step-stop="stopHold"
           />
         </div>
