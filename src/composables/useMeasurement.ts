@@ -44,7 +44,10 @@ export function useMeasurement(
    * com path is still right in pixels while the centimetres are not — the
    * overlay draws the trajectory and omits the height segment.
    */
-  const canShowHeight = computed(() => pose.result.value?.verdict.kind !== 'unusable')
+  const canShowHeight = computed(() => {
+    const verdict = pose.result.value?.verdict
+    return verdict !== undefined && verdict.kind !== 'unusable'
+  })
 
   const replay = useFlightReplay(videoRef, analysis)
 

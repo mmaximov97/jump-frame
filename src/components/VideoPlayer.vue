@@ -67,8 +67,10 @@ defineExpose({ zoomIn, zoomOut, resetZoom: reset, isZoomed })
       :style="transformStyle"
     />
 
-    <!-- PR-C mounts the pose overlay here: inside the container, outside the
-         transform, so its canvas bitmap is never stretched. -->
+    <!-- The pose overlay mounts here: inside the container, outside the
+         transform. It projects its own coordinates through the zoom matrix
+         (see composables/zoomContext), which is what keeps its stroke widths
+         constant at any zoom level. -->
     <slot name="overlay" />
 
     <button

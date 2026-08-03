@@ -81,13 +81,29 @@ export function buildSkeleton(landmarks: Landmark[]): SkeletonGeometry | null {
 }
 
 /**
- * The sampled pose nearest `time`, or null if none is closer than
- * `maxGapSeconds`.
+ * How far apart neighbouring samples may sit and still count as dense, in
+ * multiples of a frame. The dense pass samples every frame and the coarse pass
+ * every sixth, so anything between the two separates them; two frames leaves
+ * room for the jitter of real presentation timestamps without reaching six.
+ */
+const DENSE_NEIGHBOUR_FRAMES = 2
+
+/**
+ * The sampled pose nearest `time`, or null when the clip was not sampled
+ * densely enough there to draw a skeleton.
  *
- * The gap is what makes the skeleton appear over the dense pass and nowhere
- * else, without anyone having to state where the dense pass ran. The coarse
- * pass samples every COARSE_STRIDE-th frame, so outside the flight window the
- * nearest pose is always several frames away and this returns null on its own.
+ * Two conditions, and the second is the one that matters. Proximity alone is
+ * not enough: the coarse pass runs across the WHOLE clip at every sixth frame,
+ * so the nearest coarse sample is within one frame of about half of all real
+ * frames — testing proximity alone strobes the skeleton on and off at roughly
+ * 10 Hz from end to end of the video.
+ *
+ * So the sample must also sit inside a densely sampled run: both of its
+ * neighbours within DENSE_NEIGHBOUR_FRAMES. That is true only where the dense
+ * pass ran, which is the flight and its margin — without this function being
+ * told where that was. A sample at either end of the array fails for want of a
+ * neighbour to measure against, which costs one frame at each edge of the
+ * drawn window and is the honest answer: density there is unknown.
  *
  * `frames` must be sorted by time — usePoseDetection sorts before publishing.
  */
@@ -106,13 +122,24 @@ export function findFrameAt(
     else high = mid
   }
 
-  let best = frames[low]!
-  const previous = frames[low - 1]
-  if (previous && Math.abs(previous.time - time) < Math.abs(best.time - time)) {
-    best = previous
+  let index = low
+  const earlier = frames[low - 1]
+  if (earlier && Math.abs(earlier.time - time) < Math.abs(frames[low]!.time - time)) {
+    index = low - 1
   }
 
-  return Math.abs(best.time - time) <= maxGapSeconds ? best : null
+  const nearest = frames[index]!
+  if (Math.abs(nearest.time - time) > maxGapSeconds) return null
+
+  const before = frames[index - 1]
+  const after = frames[index + 1]
+  if (!before || !after) return null
+
+  const dense = maxGapSeconds * DENSE_NEIGHBOUR_FRAMES
+  if (nearest.time - before.time > dense) return null
+  if (after.time - nearest.time > dense) return null
+
+  return nearest
 }
 
 /** How many points the drawn parabola is sampled into. */

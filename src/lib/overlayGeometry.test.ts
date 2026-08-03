@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { BONES, JOINTS, buildSkeleton, findFrameAt, buildFlightGeometry } from './overlayGeometry'
 import { LANDMARK_COUNT, type Landmark, type PoseFrame, type VideoSize } from './poseTypes'
 import { measureJump } from './jumpFromCom'
+import { centreOfMass } from './bodyModel'
 import { generateJump } from './testing/syntheticJumper'
 
 /** 33 ландмарки, каждая со своими различимыми координатами. */
@@ -76,33 +77,70 @@ describe('buildSkeleton', () => {
 })
 
 describe('findFrameAt', () => {
-  const frames: PoseFrame[] = [0, 0.1, 0.2, 0.3].map((time) => ({
-    time,
-    landmarks: fakeLandmarks(),
-  }))
+  const FPS = 60
+  const GAP = 1 / FPS
+  const COARSE_STRIDE = 6
 
-  it('returns the nearest frame within the gap', () => {
-    expect(findFrameAt(frames, 0.19, 0.02)!.time).toBeCloseTo(0.2, 10)
-    expect(findFrameAt(frames, 0.21, 0.02)!.time).toBeCloseTo(0.2, 10)
+  function clip(times: number[]): PoseFrame[] {
+    return times.map((time) => ({ time, landmarks: fakeLandmarks() }))
+  }
+
+  /** What the coarse pass alone leaves behind: every COARSE_STRIDE-th frame. */
+  function coarseOnly(seconds: number): number[] {
+    const times: number[] = []
+    for (let n = 0; (n * COARSE_STRIDE) / FPS < seconds; n++) {
+      times.push((n * COARSE_STRIDE) / FPS)
+    }
+    return times
+  }
+
+  /** Coarse across the clip, plus every frame in [from, to) — a real scan. */
+  function coarseWithDenseWindow(seconds: number, from: number, to: number): number[] {
+    const dense: number[] = []
+    for (let n = Math.ceil(from * FPS); n < to * FPS; n++) dense.push(n / FPS)
+    return [...new Set([...coarseOnly(seconds), ...dense])].sort((a, b) => a - b)
+  }
+
+  const run = clip([0, 1, 2, 3, 4].map((n) => n / FPS))
+
+  it('returns the nearest sample inside a densely sampled run', () => {
+    expect(findFrameAt(run, 2 / FPS, GAP)!.time).toBeCloseTo(2 / FPS, 10)
+    expect(findFrameAt(run, 2.4 / FPS, GAP)!.time).toBeCloseTo(2 / FPS, 10)
   })
 
-  it('prefers the earlier frame when it is nearer', () => {
-    expect(findFrameAt(frames, 0.12, 0.05)!.time).toBeCloseTo(0.1, 10)
+  it('prefers the earlier sample when it is nearer', () => {
+    expect(findFrameAt(run, 1.4 / FPS, GAP)!.time).toBeCloseTo(1 / FPS, 10)
   })
 
-  it('returns null when the nearest frame is further than the gap', () => {
-    expect(findFrameAt(frames, 0.15, 0.02)).toBeNull()
-    expect(findFrameAt(frames, 5, 0.02)).toBeNull()
+  it('draws nothing anywhere on a clip the dense pass never ran on', () => {
+    const frames = clip(coarseOnly(10))
+    for (let n = 0; n < 10 * FPS; n++) {
+      expect(findFrameAt(frames, n / FPS, GAP)).toBeNull()
+    }
   })
 
-  it('handles the ends of the clip', () => {
-    expect(findFrameAt(frames, -1, 0.02)).toBeNull()
-    expect(findFrameAt(frames, 0, 0.02)!.time).toBe(0)
-    expect(findFrameAt(frames, 0.3, 0.02)!.time).toBeCloseTo(0.3, 10)
+  it('draws across the dense window and nowhere else', () => {
+    const frames = clip(coarseWithDenseWindow(10, 2.6, 3.4))
+    const drawn: number[] = []
+    for (let n = 0; n < 10 * FPS; n++) {
+      if (findFrameAt(frames, n / FPS, GAP)) drawn.push(n / FPS)
+    }
+    expect(drawn.length).toBeGreaterThan(40)
+    expect(Math.min(...drawn)).toBeGreaterThanOrEqual(2.6)
+    expect(Math.max(...drawn)).toBeLessThan(3.4)
+  })
+
+  it('returns null when the nearest sample is further than the gap', () => {
+    expect(findFrameAt(run, 10, GAP)).toBeNull()
+  })
+
+  it('returns null at the ends of a run, where density cannot be established', () => {
+    expect(findFrameAt(run, 0, GAP)).toBeNull()
+    expect(findFrameAt(run, 4 / FPS, GAP)).toBeNull()
   })
 
   it('returns null for an empty clip', () => {
-    expect(findFrameAt([], 0, 1)).toBeNull()
+    expect(findFrameAt([], 0, GAP)).toBeNull()
   })
 })
 
@@ -173,10 +211,18 @@ describe('buildFlightGeometry', () => {
     )
     const damagedAnalysis = measureJump(damaged, video).analysis!
     const geometry = buildFlightGeometry(damaged, video, damagedAnalysis)!
-    const riseCm =
-      (((geometry.takeoffY - geometry.apexY) * video.height) / geometry.scalePxPerM) * 100
-    expect(riseCm).toBeCloseTo(damagedAnalysis.comHeightCm, 6)
-    expect(geometry.trail.every((p) => Number.isFinite(p.x) && Number.isFinite(p.y))).toBe(true)
+
+    // The height comes from the fit, which comes from the track — it cannot
+    // detect a misaligned trail. These assertions can: they check the trail
+    // against the same filtered array buildComTrack indexes.
+    const usable = damaged.filter((f) => f.landmarks.length === LANDMARK_COUNT)
+    expect(geometry.trail.length).toBe(
+      damagedAnalysis.landingSampleIndex - damagedAnalysis.takeoffSampleIndex + 1
+    )
+    geometry.trail.forEach((point, i) => {
+      const source = usable[damagedAnalysis.takeoffSampleIndex + i]!
+      expect(point.x).toBeCloseTo(centreOfMass(source.landmarks).x, 12)
+    })
   })
 
   it('returns null when the flight window is too short to fit', () => {

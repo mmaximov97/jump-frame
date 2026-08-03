@@ -308,9 +308,9 @@ onUnmounted(() => {
             :landing-set="landingTime !== null"
             :has-any-marker="hasAnyMarker"
             :show-clear="isDesktop"
-            @set-takeoff="setTakeoff(currentTime)"
-            @set-landing="setLanding(currentTime)"
-            @clear-markers="clearMarkers"
+            @set-takeoff="replay.stop(); setTakeoff(currentTime)"
+            @set-landing="replay.stop(); setLanding(currentTime)"
+            @clear-markers="replay.stop(); clearMarkers()"
           />
 
           <div class="rounded-xl border border-surface-lighter bg-surface-light p-3 text-xs">

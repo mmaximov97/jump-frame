@@ -43,7 +43,10 @@ let followed: HTMLVideoElement | null = null
 
 function readCurrentTime() {
   const video = props.videoEl
-  if (video) time.value = video.currentTime
+  // Paused only. While playing, follow() supplies the mediaTime of the frame
+  // actually presented; timeupdate fires about four times a second and would
+  // coarsen it straight back, which is what the rVFC path exists to avoid.
+  if (video && video.paused) time.value = video.currentTime
 }
 
 function stopFollowing() {
