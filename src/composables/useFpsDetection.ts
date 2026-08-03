@@ -8,6 +8,14 @@ import { estimateFps, type FrameSample } from '../lib/fpsEstimate'
  */
 const SAMPLES_NEEDED = 20
 
+/**
+ * Ceiling on a single detection run. A decoder that stalls stops delivering
+ * frame callbacks, and `ended` never fires on a clip that is still mid-play,
+ * so without this the run would never settle — leaving `isDetecting` true and
+ * blocking every later attempt for the rest of the session.
+ */
+const DETECT_TIMEOUT_MS = 6000
+
 export function useFpsDetection(
   videoRef: Ref<HTMLVideoElement | null>,
   isVideoLoaded: Ref<boolean>,
@@ -30,15 +38,27 @@ export function useFpsDetection(
     const wasMuted = video.muted
     const originalTime = video.currentTime
 
+    let settled = false
+    let timeoutId: ReturnType<typeof setTimeout> | null = null
+
     video.muted = true
 
     /**
-     * Ends the run with whatever was collected. Called both on a full
-     * sample set and on `ended`, so a clip too short to reach
-     * SAMPLES_NEEDED settles instead of leaving `isDetecting` stuck true
-     * and blocking every later call.
+     * Ends the run with whatever was collected. Reached three ways — a full
+     * sample set, a clip that ended first, or the timeout — so a clip too
+     * short to reach SAMPLES_NEEDED settles instead of leaving `isDetecting`
+     * stuck true and blocking every later call.
+     *
+     * The `settled` latch matters because those paths can race: `ended` can
+     * fire with a frame callback already queued behind it. A second run would
+     * rewind `currentTime` and clear `isDetecting` again, stomping whatever
+     * state a *later* detection had established by then.
      */
     function finish() {
+      if (settled) return
+      settled = true
+
+      if (timeoutId !== null) clearTimeout(timeoutId)
       video!.removeEventListener('ended', finish)
 
       // A null estimate means the samples were unusable; leaving `fps` on
@@ -56,6 +76,8 @@ export function useFpsDetection(
     }
 
     function onFrame(_now: DOMHighResTimeStamp, metadata: VideoFrameCallbackMetadata) {
+      if (settled) return
+
       samples.push({
         mediaTime: metadata.mediaTime,
         presentedFrames: metadata.presentedFrames,
@@ -69,10 +91,15 @@ export function useFpsDetection(
       video!.requestVideoFrameCallback(onFrame)
     }
 
+    timeoutId = setTimeout(finish, DETECT_TIMEOUT_MS)
     video.addEventListener('ended', finish)
     video.requestVideoFrameCallback(onFrame)
     video.play().catch(() => {
-      // Autoplay blocked — detection not possible
+      // Autoplay blocked — detection is not possible. Bail through the same
+      // latch so the pending timeout cannot fire a second teardown later.
+      if (settled) return
+      settled = true
+      if (timeoutId !== null) clearTimeout(timeoutId)
       video.removeEventListener('ended', finish)
       video.muted = wasMuted
       isDetecting.value = false
