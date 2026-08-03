@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { provide, ref, watch } from 'vue'
 import { Minimize2 } from 'lucide-vue-next'
 import { useVideoZoom } from '../composables/useVideoZoom'
+import { ZOOM_CONTEXT } from '../composables/zoomContext'
 
 const props = defineProps<{
   src: string
@@ -38,7 +39,12 @@ function setRef(el: any) {
 // A new clip means new framing — never inherit the previous jump's zoom.
 watch(() => props.src, reset)
 
-defineExpose({ zoomIn, zoomOut, resetZoom: reset, project, isZoomed })
+provide(ZOOM_CONTEXT, { project })
+
+// zoomIn/zoomOut stay exposed: App.vue drives them from its keyboard handler,
+// which is a parent reaching into its own direct child. Only `project` moved
+// to provide/inject, because its consumer is a sibling mounted in the slot.
+defineExpose({ zoomIn, zoomOut, resetZoom: reset, isZoomed })
 </script>
 
 <template>
