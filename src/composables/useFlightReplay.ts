@@ -21,11 +21,22 @@ export function useFlightReplay(
   let from = 0
   let to = 0
 
+  /**
+   * The element the listener and the slowed playbackRate were applied to.
+   *
+   * Held separately from `videoRef` because `watch(videoRef, stop)` fires after
+   * the ref has already been reassigned: reading `videoRef.value` inside stop()
+   * would clean up the incoming element and leave the outgoing one listening,
+   * still at the replay rate.
+   */
+  let attachedTo: HTMLVideoElement | null = null
+
   function stop() {
     if (!isReplaying.value) return
     isReplaying.value = false
 
-    const video = videoRef.value
+    const video = attachedTo
+    attachedTo = null
     if (!video) return
     video.removeEventListener('timeupdate', onTimeUpdate)
     video.playbackRate = rateBeforeReplay
@@ -33,7 +44,7 @@ export function useFlightReplay(
   }
 
   function onTimeUpdate() {
-    const video = videoRef.value
+    const video = attachedTo
     if (!video || !isReplaying.value) return
     if (video.currentTime >= to) video.currentTime = from
   }
@@ -50,6 +61,7 @@ export function useFlightReplay(
     if (!isReplaying.value) rateBeforeReplay = video.playbackRate
     isReplaying.value = true
 
+    attachedTo = video
     video.addEventListener('timeupdate', onTimeUpdate)
     video.playbackRate = REPLAY_RATE
     video.currentTime = from
