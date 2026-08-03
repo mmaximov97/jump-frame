@@ -1,9 +1,10 @@
-import { computed, ref, type Ref } from 'vue'
+import { computed, ref, watch, type Ref } from 'vue'
 import { useFpsDetection } from './useFpsDetection'
 import { useFrameStepping } from './useFrameStepping'
 import { useMarkers } from './useMarkers'
 import { useJumpCalculation } from './useJumpCalculation'
 import { usePoseDetection } from './usePoseDetection'
+import { useFlightReplay } from './useFlightReplay'
 
 /**
  * Everything that turns a loaded video into a measurement: frame rate, frame
@@ -35,6 +36,24 @@ export function useMeasurement(
   const calculation = useJumpCalculation(markers.takeoffTime, markers.landingTime, fps)
   const pose = usePoseDetection(videoRef, fps)
 
+  const analysis = computed(() => pose.result.value?.analysis ?? null)
+
+  /**
+   * The verdict decides whether a height may be drawn at all. A stature outside
+   * the plausible band means the metric scale is wrong by a factor of k², so the
+   * com path is still right in pixels while the centimetres are not — the
+   * overlay draws the trajectory and omits the height segment.
+   */
+  const canShowHeight = computed(() => pose.result.value?.verdict.kind !== 'unusable')
+
+  const replay = useFlightReplay(videoRef, analysis)
+
+  // Start the loop as soon as a usable measurement lands, not on every result:
+  // an unusable verdict has no flight window worth looping.
+  watch(analysis, (result) => {
+    if (result && canShowHeight.value) replay.start()
+  })
+
   const hasAnyMarker = computed(
     () => markers.takeoffTime.value !== null || markers.landingTime.value !== null
   )
@@ -45,6 +64,9 @@ export function useMeasurement(
     ...markers,
     ...calculation,
     pose,
+    analysis,
+    canShowHeight,
+    replay,
     hasAnyMarker,
   }
 }
