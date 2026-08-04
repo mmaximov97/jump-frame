@@ -6,7 +6,6 @@ import { cmToUnit, unitLabel } from './composables/useJumpCalculation'
 import { useMeasurement } from './composables/useMeasurement'
 import { useJumpHistory } from './composables/useJumpHistory'
 import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
-import { frameAtTime } from './lib/frameTiming'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
 import PoseOverlay from './components/PoseOverlay.vue'
@@ -69,6 +68,7 @@ const {
   canShowHeight,
   replay,
   hasAnyMarker,
+  autoDetectInfo,
 } = useMeasurement(videoRef, isVideoLoaded, currentTime, duration, pause)
 
 const resultsAnchor = ref<HTMLElement | null>(null)
@@ -340,40 +340,12 @@ onUnmounted(() => {
             <p v-if="pose.error.value" class="mt-2 text-rose-400">{{ pose.error.value }}</p>
             <p v-if="pose.status.value === 'cancelled'" class="mt-2 text-slate-500">Отменено</p>
 
-            <div v-if="pose.result.value" class="mt-3 space-y-1 font-mono text-slate-300">
-              <p class="text-base font-sans font-semibold text-white">
-                {{ pose.result.value.verdict.kind === 'unusable'
-                    ? 'измерить не удалось'
-                    : pose.result.value.verdict.heightCm.toFixed(1) + ' см' }}
-              </p>
-              <p class="font-sans text-slate-400">
-                {{ pose.result.value.verdict.kind }}<template v-if="'reason' in pose.result.value.verdict">
-                · {{ pose.result.value.verdict.reason }}</template>
-              </p>
-              <p v-if="'message' in pose.result.value.verdict" class="font-sans text-slate-500">
-                {{ pose.result.value.verdict.message }}
-              </p>
-              <template v-if="pose.result.value.analysis">
-                <p>центр масс {{ pose.result.value.analysis.comHeightCm.toFixed(1) }} см</p>
-                <p>flight-time {{ pose.result.value.analysis.flightTimeHeightCm.toFixed(1) }} см</p>
-                <p>R² {{ pose.result.value.analysis.rSquared.toFixed(4) }}</p>
-                <p>рост {{ pose.result.value.analysis.statureM.toFixed(2) }} м</p>
-                <p>масштаб {{ pose.result.value.analysis.scalePxPerM.toFixed(1) }} px/м</p>
-                <p>кадров в полёте {{ pose.result.value.analysis.flightFrames }}</p>
-                <p>
-                  отрыв {{ pose.result.value.analysis.takeoffTime.toFixed(3) }} с (кадр {{ frameAtTime(pose.result.value.analysis.takeoffTime, fps) }}),
-                  приземление {{ pose.result.value.analysis.landingTime.toFixed(3) }} с (кадр {{ frameAtTime(pose.result.value.analysis.landingTime, fps) }})
-                </p>
-                <p>полёт {{ pose.result.value.analysis.flightTimeSeconds.toFixed(4) }} с</p>
-                <p>±{{ pose.result.value.analysis.errorCm.toFixed(2) }} см (только фит)</p>
-              </template>
-              <p v-if="pose.scatter.value" class="text-amber-300">
-                σ ландмарок {{ pose.scatter.value.overall.toFixed(4) }},
-                стопы {{ pose.scatter.value.feet.toFixed(4) }}
-              </p>
-              <p v-else class="text-slate-500">недостаточно неподвижных кадров</p>
-              <p class="text-slate-500">кадров разобрано {{ pose.frames.value.length }}</p>
-            </div>
+            <p
+              v-if="pose.result.value && !pose.result.value.analysis && 'message' in pose.result.value.verdict"
+              class="mt-2 text-slate-400"
+            >
+              {{ pose.result.value.verdict.message }}
+            </p>
           </div>
 
           <!-- Desktop: result stays beside the video, no separate scroll section -->
@@ -390,6 +362,7 @@ onUnmounted(() => {
                 :unit="unit"
                 :jump-height-cm="jumpHeightCm"
                 :new-record-delta="newRecordDelta"
+                :auto-detect="autoDetectInfo"
                 @set-unit="setUnit"
                 @share="openShareCard"
               />
@@ -423,6 +396,7 @@ onUnmounted(() => {
             :unit="unit"
             :jump-height-cm="jumpHeightCm"
             :new-record-delta="newRecordDelta"
+            :auto-detect="autoDetectInfo"
             @set-unit="setUnit"
             @share="openShareCard"
           />
