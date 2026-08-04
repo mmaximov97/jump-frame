@@ -17,6 +17,33 @@ const ASSETS = `${import.meta.env.BASE_URL}mediapipe`
 const COARSE_AIRBORNE_FRACTION = 0.02
 
 /**
+ * Loosens the detector's default 0.5 confidence gate on real footage where
+ * MediaPipe otherwise loses the person outright — measured on a clip shot
+ * from behind: default confidence found a full pose in 81 of 156 frames;
+ * lowering both gates to 0.1 found 104. The gap matters most exactly where
+ * detection is worst: in the single hardest ~1 s stretch of that clip, 0.1
+ * recovered 19 of 34 frames against 3 at the default.
+ *
+ * Raising the model tier (lite → full → heavy) does not substitute for this:
+ * all three bundle the identical pose_detector.tflite (the stage that decides
+ * whether a person is there at all) and differ only in the landmark
+ * regressor that runs after a detection succeeds — on that same clip, lite
+ * through heavy recovered 81, 83 and 89 of 156, and in the hardest stretch
+ * only 3, 2 and 3 of 34. The confidence gate is the lever that actually
+ * moves; the model tier is not.
+ *
+ * A lower gate does admit noisier frames, but nothing downstream trusts a
+ * frame just because it was detected: `assess()`'s plausibility checks
+ * (stature bounds, fit R², flight-time agreement) exist precisely to catch a
+ * bad frame's fallout, and reject or flag the measurement rather than report
+ * it as clean.
+ */
+const DETECTION_CONFIDENCE = {
+  minPoseDetectionConfidence: 0.1,
+  minPosePresenceConfidence: 0.1,
+}
+
+/**
  * How long a single seek may go without a presented frame before it is
  * treated as stuck. `requestVideoFrameCallback` can simply never fire — a
  * seek past the end, or a decode failure that raises no `error` event — and
@@ -76,6 +103,7 @@ export function usePoseDetection(
         baseOptions: { ...baseOptions, delegate: 'GPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
+        ...DETECTION_CONFIDENCE,
       })
     } catch {
       // Some browsers and older GPUs reject the WebGL delegate. CPU is slower
@@ -84,6 +112,7 @@ export function usePoseDetection(
         baseOptions: { ...baseOptions, delegate: 'CPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
+        ...DETECTION_CONFIDENCE,
       })
     }
     if (disposed) {
