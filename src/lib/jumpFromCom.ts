@@ -121,7 +121,7 @@ function runAnalysis(frames: PoseFrame[], video: VideoSize): AnalysisRun {
     comHeightCm: riseM * 100,
     flightTimeHeightCm: flightTimeHeightM * 100,
     flightTimeSeconds,
-    statureM: track.staturePx / fit.scalePxPerM,
+    statureM: phase.staturePxAtJump / fit.scalePxPerM,
     scalePxPerM: fit.scalePxPerM,
     errorCm: ((2 * fit.rmsResidualPx) / Math.sqrt(fit.n) / fit.scalePxPerM) * 100,
     rSquared: fit.rSquared,
