@@ -5,6 +5,7 @@ import { useMarkers } from './useMarkers'
 import { useJumpCalculation } from './useJumpCalculation'
 import { usePoseDetection } from './usePoseDetection'
 import { useFlightReplay } from './useFlightReplay'
+import { sameFrame } from '../lib/frameTiming'
 
 /**
  * Everything that turns a loaded video into a measurement: frame rate, frame
@@ -57,6 +58,34 @@ export function useMeasurement(
     if (result && canShowHeight.value) replay.start()
   })
 
+  // Auto-detect gives a starting point but never overrides a mark the person
+  // placed themselves — only fills in whichever side is still empty.
+  watch(analysis, (result) => {
+    if (!result) return
+    if (markers.takeoffTime.value === null) markers.setTakeoff(result.takeoffTime)
+    if (markers.landingTime.value === null) markers.setLanding(result.landingTime)
+  })
+
+  // Non-null only while the current marks are still the exact frames this
+  // analysis was measured on. If either mark has since been dragged, the
+  // pipeline's numbers would describe a jump that isn't the one being
+  // measured anymore, so they disappear rather than go stale.
+  const autoDetectInfo = computed(() => {
+    const result = pose.result.value
+    const a = result?.analysis
+    const takeoff = markers.takeoffTime.value
+    const landing = markers.landingTime.value
+    if (!a || !result || takeoff === null || landing === null) return null
+    if (!sameFrame(takeoff, a.takeoffTime, fps.value)) return null
+    if (!sameFrame(landing, a.landingTime, fps.value)) return null
+    return {
+      analysis: a,
+      verdict: result.verdict,
+      scatter: pose.scatter.value,
+      framesParsed: pose.frames.value.length,
+    }
+  })
+
   const hasAnyMarker = computed(
     () => markers.takeoffTime.value !== null || markers.landingTime.value !== null
   )
@@ -71,5 +100,6 @@ export function useMeasurement(
     canShowHeight,
     replay,
     hasAnyMarker,
+    autoDetectInfo,
   }
 }
