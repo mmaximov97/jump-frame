@@ -59,11 +59,18 @@ export function useMeasurement(
   })
 
   // Auto-detect gives a starting point but never overrides a mark the person
-  // placed themselves — only fills in whichever side is still empty.
+  // placed themselves — only fills in whichever side is still empty, and
+  // never seeds a side that would invalidate the OTHER already-set mark via
+  // useMarkers' own out-of-order clearing (setTakeoff/setLanding each null
+  // the opposite mark if the new time would put them out of order).
   watch(analysis, (result) => {
     if (!result) return
-    if (markers.takeoffTime.value === null) markers.setTakeoff(result.takeoffTime)
-    if (markers.landingTime.value === null) markers.setLanding(result.landingTime)
+    const takeoff = markers.takeoffTime.value
+    const landing = markers.landingTime.value
+    const canSeedTakeoff = takeoff === null && (landing === null || result.takeoffTime < landing)
+    const canSeedLanding = landing === null && (takeoff === null || result.landingTime > takeoff)
+    if (canSeedTakeoff) markers.setTakeoff(result.takeoffTime)
+    if (canSeedLanding) markers.setLanding(result.landingTime)
   })
 
   // Non-null only while the current marks are still the exact frames this

@@ -116,10 +116,14 @@ async function saveDraft(heightCm: number, flightTime: number) {
 watch(
   () =>
     hasValidMarkers.value
-      ? { heightCm: jumpHeightCm.value, flightTime: flightTimeSeconds.value }
+      ? {
+          heightCm: jumpHeightCm.value,
+          flightTime: flightTimeSeconds.value,
+          unusable: autoDetectInfo.value?.verdict.kind === 'unusable',
+        }
       : null,
   (result) => {
-    if (!result || result.heightCm === null || result.flightTime === null) return
+    if (!result || result.heightCm === null || result.flightTime === null || result.unusable) return
     saveDraft(result.heightCm, result.flightTime)
   }
 )

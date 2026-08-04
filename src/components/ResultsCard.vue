@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { Share2, Trophy } from 'lucide-vue-next'
 import type { JumpAnalysis, Verdict } from '../lib/jumpFromCom'
 import type { LandmarkScatter } from '../lib/landmarkScatter'
+import { cmToUnit } from '../composables/useJumpCalculation'
 
 const props = defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -97,7 +98,7 @@ const factText = computed(() => {
 
     <!-- Auto-detect's own estimate, shown as an independent cross-check -->
     <p v-if="autoDetect" class="text-center text-xs text-slate-500 mb-2">
-      центр масс: {{ formatHeight(autoDetect.analysis.comHeightCm) }} см
+      центр масс: {{ formatHeight(cmToUnit(autoDetect.analysis.comHeightCm, unit)) }} {{ displayHeight.unit }}
     </p>
 
     <!-- 3. Fun fact — boxed callout, distinct from plain-text warnings below -->
