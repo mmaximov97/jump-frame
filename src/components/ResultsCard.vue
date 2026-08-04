@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { Share2, Trophy } from 'lucide-vue-next'
+import type { JumpAnalysis, Verdict } from '../lib/jumpFromCom'
+import type { LandmarkScatter } from '../lib/landmarkScatter'
 
 const props = defineProps<{
   displayHeight: { value: number | null; unit: string }
@@ -12,6 +14,12 @@ const props = defineProps<{
   unit: 'metric' | 'imperial'
   jumpHeightCm: number | null
   newRecordDelta: { value: number; unit: string } | null
+  autoDetect: {
+    analysis: JumpAnalysis
+    verdict: Verdict
+    scatter: LandmarkScatter | null
+    framesParsed: number
+  } | null
 }>()
 
 const emit = defineEmits<{
@@ -87,6 +95,11 @@ const factText = computed(() => {
       {{ formatFlightTime(flightTime) }}
     </p>
 
+    <!-- Auto-detect's own estimate, shown as an independent cross-check -->
+    <p v-if="autoDetect" class="text-center text-xs text-slate-500 mb-2">
+      центр масс: {{ formatHeight(autoDetect.analysis.comHeightCm) }} см
+    </p>
+
     <!-- 3. Fun fact — boxed callout, distinct from plain-text warnings below -->
     <div v-if="factText" class="flex justify-center mb-2">
       <p class="inline-block px-3 py-1.5 rounded-lg border border-brand/30 bg-brand/10 text-xs text-slate-200 text-center">
@@ -105,6 +118,14 @@ const factText = computed(() => {
       class="text-center text-xs text-orange-400/80 mb-2"
     >
       ⚠ Low FPS ({{ fps }}) — accuracy is rough. Use 120+ FPS video for reliable results.
+    </p>
+
+    <p
+      v-if="autoDetect && 'message' in autoDetect.verdict"
+      class="text-center text-xs mb-2"
+      :class="autoDetect.verdict.kind === 'unusable' ? 'text-rose-400' : 'text-amber-400'"
+    >
+      ⚠ {{ autoDetect.verdict.message }}
     </p>
 
     <!-- 4. Secondary data — de-emphasized, smallest tier -->
@@ -142,6 +163,20 @@ const factText = computed(() => {
         </div>
       </div>
     </div>
+
+    <!-- Auto-detect's own diagnostics, collapsed by default -->
+    <details v-if="autoDetect" class="mt-2 pt-2 border-t border-surface-lighter/60 text-xs text-slate-500">
+      <summary class="cursor-pointer select-none hover:text-slate-300">Подробности автодетекта</summary>
+      <div class="mt-2 space-y-1 font-mono">
+        <p>R² {{ autoDetect.analysis.rSquared.toFixed(4) }}</p>
+        <p>рост {{ autoDetect.analysis.statureM.toFixed(2) }} м</p>
+        <p>масштаб {{ autoDetect.analysis.scalePxPerM.toFixed(1) }} px/м</p>
+        <p>кадров в полёте {{ autoDetect.analysis.flightFrames }}, разобрано {{ autoDetect.framesParsed }}</p>
+        <p v-if="autoDetect.scatter">
+          σ ландмарок {{ autoDetect.scatter.overall.toFixed(4) }}, стопы {{ autoDetect.scatter.feet.toFixed(4) }}
+        </p>
+      </div>
+    </details>
 
     <!-- 5. Share -->
     <button
