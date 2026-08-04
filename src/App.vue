@@ -405,7 +405,7 @@ onUnmounted(() => {
         v-if="hasAnyMarker"
         class="min-h-11 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200
                bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
-        @click="clearMarkers"
+        @click="replay.stop(); clearMarkers()"
       >
         Clear
       </button>
