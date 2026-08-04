@@ -23,6 +23,24 @@ export interface JumpOptions {
   takeoffPhase?: number
   /** Seed for the noise PRNG. Default 1. */
   seed?: number
+  /**
+   * Ratio of the person's apparent scale (px per metre) at the very start of
+   * the clip to their scale from takeoff onward — simulates the
+   * camera-to-subject distance changing during a running approach, before
+   * the jump. Default 1: no drift, byte-identical to a clip with no
+   * approach.
+   *
+   * Ramps linearly from `approachScaleRatio` (frame 0) to 1 (at takeoff) —
+   * `scalePxPerM` always means the scale active from takeoff onward, exactly
+   * as it did before this option existed. Holds at 1 (i.e. at `scalePxPerM`
+   * unchanged) for the rest of the clip after that. The flight itself is
+   * never modelled as changing scale: real athletes travel meaningfully less
+   * far in 0.4-0.6s airborne than during a multi-second approach, and this
+   * option's job is to validate takeoff/landing detection under drift, not
+   * to model scale changing mid-flight (see the running-approach-jump design
+   * doc's explicit scope decision).
+   */
+  approachScaleRatio?: number
 }
 
 export interface SyntheticClip {
@@ -111,9 +129,9 @@ export function generateJump(options: JumpOptions): SyntheticClip {
     timeScale = 1,
     takeoffPhase = 0.5,
     seed = 1,
+    approachScaleRatio = 1,
   } = options
 
-  const staturePx = statureM * scalePxPerM
   const v0 = Math.sqrt(2 * GRAVITY * jumpHeightM)
   const flightTimeS = (2 * v0) / GRAVITY
   const apparentFlightTimeS = flightTimeS * timeScale
@@ -126,13 +144,17 @@ export function generateJump(options: JumpOptions): SyntheticClip {
   const floorYPx = videoHeight * 0.92
 
   /**
-   * Builds one pose. `liftM` raises knees and feet toward the hips; the caller
-   * decides where the figure ends up vertically.
+   * Builds one pose at a given scale (px per metre) and lift (metres).
+   * `scale` defaults to `scalePxPerM` — the value every call site used
+   * before `approachScaleRatio` existed. Only the pre-takeoff drift ramp
+   * below ever passes a different one, to simulate the person's apparent
+   * size changing as they approach.
    */
-  function buildPose(liftM: number): Landmark[] {
-    const up = (fraction: number, lift = 0) => floorYPx - (fraction * statureM + lift) * scalePxPerM
+  function buildPose(liftM: number, scale: number = scalePxPerM): Landmark[] {
+    const up = (fraction: number, lift = 0) => floorYPx - (fraction * statureM + lift) * scale
     const cx = videoWidth / 2
-    const sideX = (halfWidth: number, side: number) => cx + side * halfWidth * staturePx
+    const frameStaturePx = statureM * scale
+    const sideX = (halfWidth: number, side: number) => cx + side * halfWidth * frameStaturePx
 
     const landmarks: Landmark[] = Array.from({ length: LANDMARK_COUNT }, () => ({ x: cx, y: up(0) }))
     const put = (index: number, x: number, y: number) => { landmarks[index] = { x, y } }
@@ -175,7 +197,15 @@ export function generateJump(options: JumpOptions): SyntheticClip {
     const time = i / fps
     let landmarks: Landmark[]
 
-    if (time <= takeoffTime || time >= landingTime) {
+    if (time <= takeoffTime) {
+      // Ramp the apparent scale from approachScaleRatio (frame 0) to 1 (at
+      // takeoff) — see JumpOptions.approachScaleRatio. A ratio of 1 (the
+      // default) makes this branch produce exactly `standingPose` every
+      // frame, identical to before this option existed.
+      const driftProgress = takeoffTime > 0 ? Math.min(1, Math.max(0, time / takeoffTime)) : 1
+      const frameScaleRatio = approachScaleRatio + (1 - approachScaleRatio) * driftProgress
+      landmarks = frameScaleRatio === 1 ? standingPose : buildPose(0, scalePxPerM * frameScaleRatio)
+    } else if (time >= landingTime) {
       landmarks = standingPose
     } else {
       const tReal = (time - takeoffTime) / timeScale

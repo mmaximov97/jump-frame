@@ -113,4 +113,43 @@ describe('generateJump', () => {
     expect(slow.truth.apparentFlightTimeS).toBeCloseTo(normal.truth.flightTimeS * 2, 9)
     expect(slow.frames.length).toBeGreaterThan(normal.frames.length)
   })
+
+  it('is identical to no-drift output when approachScaleRatio is left at its default', () => {
+    const withDefault = generateJump(BASE)
+    const explicit1 = generateJump({ ...BASE, approachScaleRatio: 1 })
+    expect(explicit1.frames).toEqual(withDefault.frames)
+    expect(explicit1.truth).toEqual(withDefault.truth)
+  })
+
+  it('shrinks the pre-takeoff standing figure toward the arrived scale', () => {
+    const clip = generateJump({ ...BASE, approachScaleRatio: 2, standFrames: 40 })
+    const footYAt = (t: number) => {
+      const f = clip.frames.find((x) => x.time >= t)!
+      // Math.min, not Math.max: the heel and foot-index landmarks sit at
+      // height fraction 0, i.e. exactly on floorYPx, for ANY scale (that's
+      // what "stands on the floor" means in buildPose) -- so they're
+      // scale-invariant while liftM is 0, and Math.max over the group would
+      // always saturate at the constant floor line, hiding the effect this
+      // test wants to observe. The ankle (fraction 0.039) is the one point
+      // in FOOT_LANDMARKS that actually rises off the floor line as scale
+      // grows, so Math.min (the topmost/smallest-y point of the group) is
+      // what picks up the drift.
+      return Math.min(...FOOT_LANDMARKS.map((i) => f.landmarks[i]!.y))
+    }
+    // Frame 0 is at the far (2x) end of the ramp; a frame just before takeoff
+    // is at the arrived (1x) end. Both stand on the same floor line
+    // (floorYPx), so a LARGER apparent scale pushes the ankle's normalized y
+    // further from that line -- frame 0's foot should sit clearly higher up
+    // the frame (smaller normalized y) than the frame right before takeoff.
+    expect(footYAt(0)).toBeLessThan(footYAt(clip.truth.takeoffTime - 1 / BASE.fps))
+  })
+
+  it('holds the arrived scale for the flight and after landing, matching scalePxPerM exactly', () => {
+    const clip = generateJump({ ...BASE, approachScaleRatio: 2 })
+    // truth.scalePxPerM is always the arrived (post-drift) scale -- the
+    // flight itself is never modelled as changing scale (see the
+    // running-approach-jump design doc's explicit scope decision).
+    expect(clip.truth.scalePxPerM).toBe(BASE.scalePxPerM)
+    expect(clip.truth.statureM).toBe(1.8)
+  })
 })
