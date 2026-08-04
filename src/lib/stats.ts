@@ -18,3 +18,53 @@ export function percentile(sorted: number[], p: number): number {
   const index = Math.min(sorted.length - 1, Math.max(0, Math.round(p * (sorted.length - 1))))
   return sorted[index]!
 }
+
+/**
+ * The p-th percentile of `values[j]` for every `j` whose `times[j]` falls
+ * within `windowSeconds / 2` of `times[i]`, evaluated at every index `i` — or
+ * `null` where fewer than `minPoints` fall in that window.
+ *
+ * Centred, not causal: every caller runs this once over an already fully
+ * decoded clip, never live, so there is no reason to discard the half of the
+ * window a centred computation gets for free — a backward-only window would
+ * leave the estimate lagging exactly where a real depth change is fastest.
+ *
+ * `times` need not be evenly spaced. The two-pass frame walk in
+ * usePoseDetection.ts samples a clip unevenly on purpose — sparse everywhere,
+ * dense only near a suspected flight — so the window has to be defined in
+ * seconds, not in a fixed count of neighbouring array entries: a fixed-count
+ * window would span wildly different real time depending on where in the
+ * clip it happened to land.
+ *
+ * O(n^2) -- for every index, scans every other index. Deliberately not
+ * optimised: real clips run to a few hundred sampled frames, and a
+ * two-pointer sliding window would only pay for itself at a scale this
+ * pipeline never reaches.
+ */
+export function rollingPercentile(
+  times: number[], values: number[], windowSeconds: number, minPoints: number, p: number
+): (number | null)[] {
+  const halfWindow = windowSeconds / 2
+  const result: (number | null)[] = []
+  for (let i = 0; i < times.length; i++) {
+    const t = times[i]!
+    const inWindow: number[] = []
+    for (let j = 0; j < times.length; j++) {
+      if (Math.abs(times[j]! - t) <= halfWindow) inWindow.push(values[j]!)
+    }
+    if (inWindow.length < minPoints) {
+      result.push(null)
+      continue
+    }
+    inWindow.sort((a, b) => a - b)
+    result.push(percentile(inWindow, p))
+  }
+  return result
+}
+
+/** rollingPercentile at p=0.5 -- the statistic every rolling-floor caller wants. */
+export function rollingMedian(
+  times: number[], values: number[], windowSeconds: number, minPoints: number
+): (number | null)[] {
+  return rollingPercentile(times, values, windowSeconds, minPoints, 0.5)
+}
