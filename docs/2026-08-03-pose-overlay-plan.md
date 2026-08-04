@@ -20,7 +20,7 @@
 - Ось `y` растёт вниз. Все координаты, которые отдаёт `src/lib/overlayGeometry.ts`, — **нормализованные** (0..1), как их сообщает MediaPipe.
 - В сообщениях коммитов **не добавлять** строки `Co-Authored-By`.
 - Не запускать `git push`.
-- Кроме одной строки в `jumpFromCom.ts` (снять `export` с `EDGE_TRIM_FRAMES`, Task 2), ядро PR-B не трогать: `bodyModel.ts`, `comTrack.ts`, `flightPhase.ts`, `parabolaFit.ts`, `physics.ts`, `stats.ts`, `zoomMath.ts`.
+- Кроме одной строки в `jumpFromCom.ts` (добавить `export` к `EDGE_TRIM_FRAMES`, Task 2), ядро PR-B не трогать: `bodyModel.ts`, `comTrack.ts`, `flightPhase.ts`, `parabolaFit.ts`, `physics.ts`, `stats.ts`, `zoomMath.ts`.
 - Базовая линия тестов на старте — **140**. Каждая задача сообщает фактическое число.
 
 ---
@@ -349,7 +349,7 @@ git commit -m "Lay out the skeleton and pick the pose nearest a given instant"
 ### Task 2: Геометрия полёта
 
 **Files:**
-- Modify: `src/lib/jumpFromCom.ts` (одна строка — снять `export` с `EDGE_TRIM_FRAMES`)
+- Modify: `src/lib/jumpFromCom.ts` (одна строка — добавить `export` к `EDGE_TRIM_FRAMES`)
 - Modify: `src/lib/overlayGeometry.ts`
 - Modify: `src/lib/overlayGeometry.test.ts`
 

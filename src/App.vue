@@ -2,16 +2,14 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { ArrowLeft, CircleQuestionMark } from 'lucide-vue-next'
 import { useVideoPlayer } from './composables/useVideoPlayer'
-import { useFpsDetection } from './composables/useFpsDetection'
-import { useFrameStepping } from './composables/useFrameStepping'
-import { useMarkers } from './composables/useMarkers'
-import { useJumpCalculation, cmToUnit, unitLabel } from './composables/useJumpCalculation'
+import { cmToUnit, unitLabel } from './composables/useJumpCalculation'
+import { useMeasurement } from './composables/useMeasurement'
 import { useJumpHistory } from './composables/useJumpHistory'
 import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
-import { usePoseDetection } from './composables/usePoseDetection'
 import { frameAtTime } from './lib/frameTiming'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
+import PoseOverlay from './components/PoseOverlay.vue'
 import Timeline from './components/Timeline.vue'
 import FrameControls from './components/FrameControls.vue'
 import MarkerControls from './components/MarkerControls.vue'
@@ -31,8 +29,6 @@ function onDesktopQueryChange(e: MediaQueryListEvent) {
   isDesktop.value = e.matches
 }
 
-const fps = ref(60)
-
 const {
   videoRef,
   videoSrc,
@@ -46,27 +42,20 @@ const {
   seekTo,
 } = useVideoPlayer()
 
-useFpsDetection(videoRef, isVideoLoaded, fps)
-
 const {
+  fps,
   currentFrame,
   startStepForwardHold,
   startStepBackwardHold,
   stopHold,
   stepForward,
   stepBackward,
-} = useFrameStepping(videoRef, fps, currentTime, duration, pause)
-
-const {
   takeoffTime,
   landingTime,
   hasValidMarkers,
   setTakeoff,
   setLanding,
   clearMarkers,
-} = useMarkers()
-
-const {
   unit,
   takeoffFrame,
   landingFrame,
@@ -75,13 +64,12 @@ const {
   displayHeight,
   displayError,
   setUnit,
-} = useJumpCalculation(takeoffTime, landingTime, fps)
-
-const pose = usePoseDetection(videoRef, fps)
-
-const hasAnyMarker = computed(
-  () => takeoffTime.value !== null || landingTime.value !== null
-)
+  pose,
+  analysis,
+  canShowHeight,
+  replay,
+  hasAnyMarker,
+} = useMeasurement(videoRef, isVideoLoaded, currentTime, duration, pause)
 
 const resultsAnchor = ref<HTMLElement | null>(null)
 const videoPlayer = ref<InstanceType<typeof VideoPlayer> | null>(null)
@@ -143,6 +131,7 @@ function onFileSelected(file: File) {
 }
 
 function startNewVideo() {
+  replay.stop()
   history.finalizeDraft()
   // usePoseDetection aborts a scan of the outgoing video on its own (it
   // watches videoRef), but it deliberately never moves `status` off
@@ -169,6 +158,7 @@ function openShareCard() {
 }
 
 function onTimelineSeek(time: number) {
+  replay.stop()
   seekTo(time)
 }
 
@@ -176,9 +166,11 @@ function onKeydown(e: KeyboardEvent) {
   if (!isVideoLoaded.value || showShareCard.value) return
   if (e.key === 'ArrowLeft') {
     e.preventDefault()
+    replay.stop()
     stepBackward()
   } else if (e.key === 'ArrowRight') {
     e.preventDefault()
+    replay.stop()
     stepForward()
   } else if (e.key === '+' || e.key === '=') {
     e.preventDefault()
@@ -275,7 +267,18 @@ onUnmounted(() => {
       <div class="flex-1 min-h-0 flex flex-col md:flex-row gap-3">
         <!-- Video + playback controls -->
         <div class="flex-1 min-h-0 flex flex-col">
-          <VideoPlayer ref="videoPlayer" :src="videoSrc" @video-ref="setVideoRef" />
+          <VideoPlayer ref="videoPlayer" :src="videoSrc" @video-ref="setVideoRef">
+            <template #overlay>
+              <PoseOverlay
+                :frames="pose.frames.value"
+                :analysis="analysis"
+                :video-size="{ width: videoRef?.videoWidth ?? 0, height: videoRef?.videoHeight ?? 0 }"
+                :video-el="videoRef"
+                :fps="fps"
+                :show-height="canShowHeight"
+              />
+            </template>
+          </VideoPlayer>
           <Timeline
             v-if="isVideoLoaded"
             :duration="duration"
@@ -283,7 +286,7 @@ onUnmounted(() => {
             :takeoff-time="takeoffTime"
             :landing-time="landingTime"
             :video-el="videoRef"
-            @drag-start="pause"
+            @drag-start="replay.stop(); pause()"
             @seek="onTimelineSeek"
           />
           <FrameControls
@@ -291,9 +294,9 @@ onUnmounted(() => {
             :is-playing="isPlaying"
             :current-time="currentTime"
             :current-frame="currentFrame"
-            @toggle-play="togglePlayPause"
-            @step-forward-hold="startStepForwardHold"
-            @step-backward-hold="startStepBackwardHold"
+            @toggle-play="replay.stop(); togglePlayPause()"
+            @step-forward-hold="replay.stop(); startStepForwardHold()"
+            @step-backward-hold="replay.stop(); startStepBackwardHold()"
             @step-stop="stopHold"
           />
         </div>
@@ -305,9 +308,9 @@ onUnmounted(() => {
             :landing-set="landingTime !== null"
             :has-any-marker="hasAnyMarker"
             :show-clear="isDesktop"
-            @set-takeoff="setTakeoff(currentTime)"
-            @set-landing="setLanding(currentTime)"
-            @clear-markers="clearMarkers"
+            @set-takeoff="replay.stop(); setTakeoff(currentTime)"
+            @set-landing="replay.stop(); setLanding(currentTime)"
+            @clear-markers="replay.stop(); clearMarkers()"
           />
 
           <div class="rounded-xl border border-surface-lighter bg-surface-light p-3 text-xs">
@@ -402,7 +405,7 @@ onUnmounted(() => {
         v-if="hasAnyMarker"
         class="min-h-11 rounded-lg text-sm font-medium text-slate-400 hover:text-slate-200
                bg-surface-light hover:bg-surface-lighter border border-surface-lighter transition-colors"
-        @click="clearMarkers"
+        @click="replay.stop(); clearMarkers()"
       >
         Clear
       </button>
