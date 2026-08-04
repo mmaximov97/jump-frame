@@ -141,4 +141,14 @@ describe('buildComTrack', () => {
       expect(Math.abs(track.staturePx - truthPx)).toBeLessThan(Math.abs(naivePx - truthPx))
     }
   })
+
+  it('returns spans in frame order (not sorted), so they pair up with times', () => {
+    const track = buildComTrack([
+      frame(0, { [LM.NOSE]: { x: 0.5, y: 0.1 } }), // nose far above the foot -> large span
+      frame(1 / 60, { [LM.NOSE]: { x: 0.5, y: 0.4 } }), // nose closer to the foot -> smaller span
+    ], VIDEO)
+    // Sorted ascending, frame 1's (smaller) span would come first. It
+    // doesn't -- spans stays in frame order, matching times/footY.
+    expect(track.spans[0]!).toBeGreaterThan(track.spans[1]!)
+  })
 })
