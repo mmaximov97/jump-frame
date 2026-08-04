@@ -7,6 +7,8 @@ import {
 import { planCoarsePass, planFinePass } from '../lib/framePlan'
 import { estimateScatter, type LandmarkScatter } from '../lib/landmarkScatter'
 import { measureJump, type JumpAnalysis, type Verdict } from '../lib/jumpFromCom'
+import { ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS } from '../lib/flightPhase'
+import { rollingMedian, rollingPercentile } from '../lib/stats'
 import { LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from '../lib/poseTypes'
 
 export type DetectionStatus = 'idle' | 'loading' | 'scanning' | 'done' | 'error' | 'cancelled'
@@ -213,10 +215,37 @@ export function usePoseDetection(
   }
 
   /**
+   * Same displacement test the pixel-space version below uses, applied once
+   * with a given floor/stature source. Shared so the global and rolling
+   * passes below can only differ in what floor/stature they read, never in
+   * how a sample gets classified from them.
+   */
+  function classify(
+    footY: number[], floor: (i: number) => number, stature: (i: number) => number
+  ): number[] {
+    const indices: number[] = []
+    for (let i = 0; i < footY.length; i++) {
+      const s = stature(i)
+      if (!(s > 0)) continue
+      if (floor(i) - footY[i]! > COARSE_AIRBORNE_FRACTION * s) indices.push(i)
+    }
+    return indices
+  }
+
+  /**
    * Which coarse samples had a foot clear of the clip's floor level.
    *
    * A deliberately crude cousin of `findFlightPhase` — it only has to say
    * roughly where to look closer, so it skips the sub-frame work entirely.
+   *
+   * Global floor/stature first, exactly as before this fallback existed.
+   * Rolling is tried only if the global pass finds nothing, or finds a
+   * stretch that runs to the very last coarse sample without coming back
+   * down — the same failure shape flightPhase.ts's own rolling fallback
+   * exists for (see its docstring): the athlete's distance to the camera
+   * changed during the clip, so the whole-clip floor no longer describes
+   * "standing" anywhere past where it was measured. See the
+   * running-approach-jump design doc.
    */
   function airborneIndices(coarse: PoseFrame[]): number[] {
     if (coarse.length === 0) return []
@@ -226,22 +255,35 @@ export function usePoseDetection(
         f.landmarks[LM.LEFT_FOOT_INDEX]!.y, f.landmarks[LM.RIGHT_FOOT_INDEX]!.y
       )
     )
-    const sorted = [...footY].sort((a, b) => a - b)
-    const floor = sorted[Math.min(sorted.length - 1, Math.round(0.9 * (sorted.length - 1)))]!
     const noseY = coarse.map((f) => f.landmarks[LM.NOSE]!.y)
-    const stature = Math.max(...footY.map((y, i) => y - noseY[i]!))
+    const spans = footY.map((y, i) => y - noseY[i]!)
+
+    const sorted = [...footY].sort((a, b) => a - b)
+    const globalFloor = sorted[Math.min(sorted.length - 1, Math.round(0.9 * (sorted.length - 1)))]!
+    const globalStature = Math.max(...spans)
     // A degenerate detection (nose at or below foot level in every frame)
     // sends the threshold to zero or negative, which then reads nearly every
     // sample as airborne — measured: 50 of 50 fine-pass seeks, roughly six
     // times the detector calls, before the pipeline downstream correctly
-    // refuses the result anyway. Refuse to flag anything here instead.
-    if (!(stature > 0)) return []
-    const threshold = COARSE_AIRBORNE_FRACTION * stature
-    const indices: number[] = []
-    for (let i = 0; i < footY.length; i++) {
-      if (floor - footY[i]! > threshold) indices.push(i)
+    // refuses the result anyway. Refuse to flag anything here instead, on
+    // either pass — a nose reading at or below the foot is not something a
+    // rolling window fixes.
+    if (!(globalStature > 0)) return []
+
+    const globalIndices = classify(footY, () => globalFloor, () => globalStature)
+    if (globalIndices.length > 0 && globalIndices[globalIndices.length - 1]! < footY.length - 1) {
+      return globalIndices
     }
-    return indices
+
+    const times = coarse.map((f) => f.time)
+    const rollingFloor = rollingMedian(times, footY, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS)
+    const rollingStature = rollingPercentile(times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, 0.9)
+    const rollingIndices = classify(
+      footY,
+      (i) => rollingFloor[i] ?? globalFloor,
+      (i) => rollingStature[i] ?? globalStature
+    )
+    return rollingIndices.length > 0 ? rollingIndices : globalIndices
   }
 
   /**
