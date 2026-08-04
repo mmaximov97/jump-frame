@@ -42,3 +42,8 @@ export function timeAtFrame(frame: number, fps: number): number {
   if (!Number.isFinite(frame) || !Number.isFinite(fps) || fps <= 0) return 0
   return Math.max(0, (frame + 0.5) / fps)
 }
+
+/** Whether two playback times land on the same frame at this frame rate. */
+export function sameFrame(a: number, b: number, fps: number): boolean {
+  return frameAtTime(a, fps) === frameAtTime(b, fps)
+}

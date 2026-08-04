@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { frameAtTime, timeAtFrame } from './frameTiming'
+import { frameAtTime, sameFrame, timeAtFrame } from './frameTiming'
 
 /**
  * The real rate of the clip this bug was reported on: ffprobe gives 239
@@ -69,5 +69,26 @@ describe('timeAtFrame', () => {
     expect(timeAtFrame(0, 0)).toBe(0)
     expect(timeAtFrame(NaN, 60)).toBe(0)
     expect(timeAtFrame(5, NaN)).toBe(0)
+  })
+})
+
+describe('sameFrame', () => {
+  it('is true for two times inside the same frame', () => {
+    expect(sameFrame(60 / 60, 60.4 / 60, 60)).toBe(true)
+  })
+
+  it('is false once the times land on different frames', () => {
+    expect(sameFrame(60.4 / 60, 61.1 / 60, 60)).toBe(false)
+  })
+
+  it('agrees with frameAtTime on the read-back jitter case', () => {
+    // 57.99996 frames reads back a hair short of frame 58 — see frameAtTime's
+    // own test above. sameFrame must snap the same way frameAtTime does.
+    const asReadBack = 57.99996 / 60
+    expect(sameFrame(asReadBack, 58 / 60, 60)).toBe(true)
+  })
+
+  it('is true when both times are frame 0', () => {
+    expect(sameFrame(0, 0, 60)).toBe(true)
   })
 })
