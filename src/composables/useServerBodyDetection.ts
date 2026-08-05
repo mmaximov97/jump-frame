@@ -36,6 +36,7 @@ export function useServerBodyDetection(
 
   const POLL_INTERVAL_MS = 1500
   const POLL_TIMEOUT_MS = 120_000
+  const SEEK_TIMEOUT_MS = 5000
   // Every frame, at the video's own frame rate -- matches the "extract every
   // frame" choice usePoseDetection.ts's planFullPass already made for the
   // MediaPipe pipeline this composable is deliberately independent of, kept
@@ -53,14 +54,24 @@ export function useServerBodyDetection(
     const frames: { time: number; blob: Blob }[] = []
     const duration = video.duration
     for (let t = 0; t < duration; t += SAMPLE_STEP_SECONDS) {
-      await new Promise<void>((resolve) => {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked)
-          resolve()
-        }
-        video.addEventListener('seeked', onSeeked)
-        video.currentTime = t
-      })
+      // Skip seek if already at target time (within 1ms epsilon for floating-point precision)
+      if (Math.abs(video.currentTime - t) >= 1e-3) {
+        // Need to seek to target time with timeout protection
+        await new Promise<void>((resolve, reject) => {
+          const timeoutId = setTimeout(() => {
+            video.removeEventListener('seeked', onSeeked)
+            reject(new Error(`Timed out seeking to ${t}s`))
+          }, SEEK_TIMEOUT_MS)
+
+          const onSeeked = () => {
+            clearTimeout(timeoutId)
+            video.removeEventListener('seeked', onSeeked)
+            resolve()
+          }
+          video.addEventListener('seeked', onSeeked)
+          video.currentTime = t
+        })
+      }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.85))
       if (blob) frames.push({ time: t, blob })
