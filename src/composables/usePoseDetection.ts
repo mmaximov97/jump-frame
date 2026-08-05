@@ -4,20 +4,15 @@ import {
   PoseLandmarker,
   type PoseLandmarkerResult,
 } from '@mediapipe/tasks-vision'
-import { planCoarsePass, planFinePass } from '../lib/framePlan'
 import { estimateScatter, type LandmarkScatter } from '../lib/landmarkScatter'
 import { measureJump, type JumpAnalysis, type Verdict } from '../lib/jumpFromCom'
-import { ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, FLOOR_PERCENTILE } from '../lib/flightPhase'
-import { STANDING_PERCENTILE } from '../lib/comTrack'
-import { rollingMedian, rollingPercentile } from '../lib/stats'
-import { LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from '../lib/poseTypes'
+import { buildComTrack } from '../lib/comTrack'
+import { guessFlightWindow, type SlopeGuess } from '../lib/comSlope'
+import { LANDMARK_COUNT, type Landmark, type PoseFrame } from '../lib/poseTypes'
 
 export type DetectionStatus = 'idle' | 'loading' | 'scanning' | 'done' | 'error' | 'cancelled'
 
 const ASSETS = `${import.meta.env.BASE_URL}mediapipe`
-
-/** A foot this far above the clip's floor level counts as airborne. */
-const COARSE_AIRBORNE_FRACTION = 0.02
 
 /**
  * Loosens the detector's default 0.5 confidence gate on real footage where
@@ -75,6 +70,7 @@ export function usePoseDetection(
   const result = ref<{ analysis: JumpAnalysis | null; verdict: Verdict } | null>(null)
   const scatter = ref<LandmarkScatter | null>(null)
   const frames = ref<PoseFrame[]>([])
+  const guess = ref<SlopeGuess | null>(null)
 
   let landmarker: PoseLandmarker | null = null
   // The in-flight load, memoised separately from the finished model: two
@@ -216,98 +212,18 @@ export function usePoseDetection(
   }
 
   /**
-   * Same displacement test the pixel-space version below uses, applied once
-   * with a given floor/stature source. Shared so the global and rolling
-   * passes below can only differ in what floor/stature they read, never in
-   * how a sample gets classified from them.
+   * Every playback instant to sample, once per frame across the whole clip.
+   * Multiplies (n * step) instead of accumulating (t += step) to avoid
+   * floating-point drift on a long clip — the same technique the old
+   * two-pass scheduler's planCoarsePass used, kept when that file was
+   * deleted (see docs/2026-08-05-com-slope-marker-guess-design.md).
    */
-  function classify(
-    footY: number[], floor: (i: number) => number, stature: (i: number) => number
-  ): number[] {
-    const indices: number[] = []
-    for (let i = 0; i < footY.length; i++) {
-      const s = stature(i)
-      if (!(s > 0)) continue
-      if (floor(i) - footY[i]! > COARSE_AIRBORNE_FRACTION * s) indices.push(i)
-    }
-    return indices
-  }
-
-  /**
-   * Which coarse samples had a foot clear of the clip's floor level.
-   *
-   * A deliberately crude cousin of `findFlightPhase` — it only has to say
-   * roughly where to look closer, so it skips the sub-frame work entirely.
-   *
-   * Global floor/stature first, exactly as before this fallback existed.
-   * Rolling is tried only if the global pass finds nothing, or finds a
-   * stretch that runs to the very last coarse sample without coming back
-   * down — the same failure shape flightPhase.ts's own rolling fallback
-   * exists for (see its docstring): the athlete's distance to the camera
-   * changed during the clip, so the whole-clip floor no longer describes
-   * "standing" anywhere past where it was measured. See the
-   * running-approach-jump design doc.
-   */
-  function airborneIndices(coarse: PoseFrame[]): number[] {
-    if (coarse.length === 0) return []
-    const footY = coarse.map((f) =>
-      Math.max(
-        f.landmarks[LM.LEFT_HEEL]!.y, f.landmarks[LM.RIGHT_HEEL]!.y,
-        f.landmarks[LM.LEFT_FOOT_INDEX]!.y, f.landmarks[LM.RIGHT_FOOT_INDEX]!.y
-      )
-    )
-    const noseY = coarse.map((f) => f.landmarks[LM.NOSE]!.y)
-    const spans = footY.map((y, i) => y - noseY[i]!)
-
-    const sorted = [...footY].sort((a, b) => a - b)
-    const globalFloor = sorted[Math.min(sorted.length - 1, Math.round(FLOOR_PERCENTILE * (sorted.length - 1)))]!
-    // Deliberately a different statistic than the rolling pass below
-    // (max vs. a percentile) -- this composable is a coarse heuristic for
-    // where to sample densely, not the final measurement (see
-    // findFlightPhase for that), and changing this to match would be a
-    // behavior change, not a naming cleanup.
-    const globalStature = Math.max(...spans)
-    // A degenerate detection (nose at or below foot level in every frame)
-    // sends the threshold to zero or negative, which then reads nearly every
-    // sample as airborne — measured: 50 of 50 fine-pass seeks, roughly six
-    // times the detector calls, before the pipeline downstream correctly
-    // refuses the result anyway. Refuse to flag anything here instead, on
-    // either pass — a nose reading at or below the foot is not something a
-    // rolling window fixes.
-    if (!(globalStature > 0)) return []
-
-    const globalIndices = classify(footY, () => globalFloor, () => globalStature)
-    if (globalIndices.length > 0 && globalIndices[globalIndices.length - 1]! < footY.length - 1) {
-      return globalIndices
-    }
-
-    const times = coarse.map((f) => f.time)
-    const rollingFloor = rollingMedian(times, footY, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS)
-    const rollingStature = rollingPercentile(times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, STANDING_PERCENTILE)
-    const rollingIndices = classify(
-      footY,
-      (i) => rollingFloor[i] ?? globalFloor,
-      (i) => rollingStature[i] ?? globalStature
-    )
-    return rollingIndices.length > 0 ? rollingIndices : globalIndices
-  }
-
-  /**
-   * Two seeks can land on the same decoded frame — the fine pass schedules at
-   * the nominal frame period, which drifts from the real one. Duplicated
-   * timestamps would feed the same sample to the fit twice, quietly weighting
-   * it double.
-   */
-  function dedupeByTime(collected: PoseFrame[]): PoseFrame[] {
-    const seen = new Set<number>()
-    const unique: PoseFrame[] = []
-    for (const frame of collected) {
-      const key = Math.round(frame.time * 1e6)
-      if (seen.has(key)) continue
-      seen.add(key)
-      unique.push(frame)
-    }
-    return unique
+  function planFullPass(duration: number, fps: number): number[] {
+    if (!(duration > 0) || !(fps > 0)) return []
+    const step = 1 / fps
+    const times: number[] = []
+    for (let n = 0; n * step < duration; n++) times.push(n * step)
+    return times
   }
 
   async function run(): Promise<void> {
@@ -331,7 +247,7 @@ export function usePoseDetection(
     if (!video || !(Number.isFinite(video.duration) && video.duration > 0)) {
       // `duration` reads `Infinity` for a freshly recorded MediaRecorder
       // WebM in Chrome until the file has been seeked to the end at least
-      // once. `planCoarsePass`'s loop would never terminate against that,
+      // once. `planFullPass`'s loop would never terminate against that,
       // and — being synchronous — that hang is unreachable by cancel(), the
       // abort signal, or the seek timeout. Refuse it outright.
       if (isCurrent()) {
@@ -352,6 +268,7 @@ export function usePoseDetection(
     result.value = null
     scatter.value = null
     frames.value = []
+    guess.value = null
     progress.value = 0
     status.value = 'loading'
 
@@ -374,24 +291,18 @@ export function usePoseDetection(
       status.value = 'scanning'
 
       const rate = fps.value > 0 ? fps.value : 60
-      const coarseTimes = planCoarsePass(video.duration, rate)
-      const coarse = await scan(video, detector, coarseTimes, signal, isCurrent, (done) => {
-        progress.value = (done / coarseTimes.length) * 0.5
+      const allTimes = planFullPass(video.duration, rate)
+      const all = await scan(video, detector, allTimes, signal, isCurrent, (done) => {
+        progress.value = done / allTimes.length
       })
-
-      const fineTimes = planFinePass(coarseTimes, airborneIndices(coarse), video.duration, rate)
-      const fine = fineTimes.length === 0
-        ? []
-        : await scan(video, detector, fineTimes, signal, isCurrent, (done) => {
-            progress.value = 0.5 + (done / fineTimes.length) * 0.5
-          })
 
       if (!isCurrent()) return
 
-      const all = dedupeByTime([...coarse, ...fine].sort((a, b) => a.time - b.time))
       frames.value = all
       scatter.value = estimateScatter(all)
-      result.value = measureJump(all, { width: video.videoWidth, height: video.videoHeight })
+      const videoSize = { width: video.videoWidth, height: video.videoHeight }
+      result.value = measureJump(all, videoSize)
+      guess.value = guessFlightWindow(buildComTrack(all, videoSize))
       progress.value = 1
       status.value = 'done'
     } catch (caught) {
@@ -477,5 +388,5 @@ export function usePoseDetection(
     landmarker = null
   })
 
-  return { status, progress, error, result, scatter, frames, run, cancel }
+  return { status, progress, error, result, scatter, frames, guess, run, cancel }
 }
