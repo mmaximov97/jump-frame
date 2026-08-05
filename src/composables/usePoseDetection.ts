@@ -7,7 +7,8 @@ import {
 import { planCoarsePass, planFinePass } from '../lib/framePlan'
 import { estimateScatter, type LandmarkScatter } from '../lib/landmarkScatter'
 import { measureJump, type JumpAnalysis, type Verdict } from '../lib/jumpFromCom'
-import { ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS } from '../lib/flightPhase'
+import { ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, FLOOR_PERCENTILE } from '../lib/flightPhase'
+import { STANDING_PERCENTILE } from '../lib/comTrack'
 import { rollingMedian, rollingPercentile } from '../lib/stats'
 import { LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from '../lib/poseTypes'
 
@@ -259,7 +260,12 @@ export function usePoseDetection(
     const spans = footY.map((y, i) => y - noseY[i]!)
 
     const sorted = [...footY].sort((a, b) => a - b)
-    const globalFloor = sorted[Math.min(sorted.length - 1, Math.round(0.9 * (sorted.length - 1)))]!
+    const globalFloor = sorted[Math.min(sorted.length - 1, Math.round(FLOOR_PERCENTILE * (sorted.length - 1)))]!
+    // Deliberately a different statistic than the rolling pass below
+    // (max vs. a percentile) -- this composable is a coarse heuristic for
+    // where to sample densely, not the final measurement (see
+    // findFlightPhase for that), and changing this to match would be a
+    // behavior change, not a naming cleanup.
     const globalStature = Math.max(...spans)
     // A degenerate detection (nose at or below foot level in every frame)
     // sends the threshold to zero or negative, which then reads nearly every
@@ -277,7 +283,7 @@ export function usePoseDetection(
 
     const times = coarse.map((f) => f.time)
     const rollingFloor = rollingMedian(times, footY, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS)
-    const rollingStature = rollingPercentile(times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, 0.9)
+    const rollingStature = rollingPercentile(times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, STANDING_PERCENTILE)
     const rollingIndices = classify(
       footY,
       (i) => rollingFloor[i] ?? globalFloor,

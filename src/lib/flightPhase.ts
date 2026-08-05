@@ -6,9 +6,11 @@ export interface FlightPhase {
   /**
    * The sub-frame-corrected takeoff boundary frame. This is usually, but not
    * always, the first frame the coarse AIRBORNE_THRESHOLD_FRACTION test
-   * calls airborne — reclassification (see extendBoundary) can pull it one
-   * frame earlier (MAX_BOUNDARY_EXTENSION) when the threshold itself lagged
-   * the true takeoff. The one guarantee callers can rely on is
+   * calls airborne — reclassification against a locally-computed floor (see
+   * findFlightPhase's takeoff boundary-refinement walk, not extendBoundary,
+   * which never runs on this edge) can pull it one frame earlier
+   * (MAX_BOUNDARY_EXTENSION) when the threshold itself lagged the true
+   * takeoff. The one guarantee callers can rely on is
    * `takeoffTime ∈ [times[takeoffFrame - 1], times[takeoffFrame]]` (or
    * `takeoffTime === times[0]` when `takeoffFrame === 0`) — not that
    * `floorY - footY[takeoffFrame] > threshold`.
@@ -16,10 +18,13 @@ export interface FlightPhase {
   takeoffFrame: number
   /**
    * The sub-frame-corrected landing boundary frame. Symmetric to
-   * `takeoffFrame`: usually the first frame back below the coarse threshold
-   * after the airborne run, but reclassification can push it one frame
-   * later. Guarantee: `landingTime ∈ [times[landingFrame - 1],
-   * times[landingFrame]]`.
+   * `takeoffFrame`'s local-floor reclassification, capped the same way at
+   * MAX_BOUNDARY_EXTENSION -- but landing also passes through
+   * `extendBoundary` afterward (the one boundary-refinement mechanism that
+   * DOES run on this edge), which can reclassify one further frame under
+   * its own, stricter test. So this edge can move up to two frames past the
+   * coarse threshold crossing, not one. Guarantee: `landingTime ∈
+   * [times[landingFrame - 1], times[landingFrame]]`.
    */
   landingFrame: number
   /** Sub-frame takeoff instant, seconds. */
@@ -27,12 +32,16 @@ export interface FlightPhase {
   /** Sub-frame landing instant, seconds. */
   landingTime: number
   /**
-   * The stature (pixels) this jump was actually measured against — read
-   * from a rolling window near the takeoff instant, not distilled from the
-   * whole clip. jumpFromCom.ts's plausibility check reads this instead of
-   * ComTrack's own `staturePx`, so a clip where the athlete's distance to
-   * the camera changed elsewhere (a running approach, most often) is not
+   * The stature (pixels) this jump was actually measured against. Equal to
+   * the whole-clip `staturePx` whenever the global floor/threshold search
+   * below found and fully resolved a candidate run -- the common case.
+   * Only read from a rolling window near the takeoff instant when that
+   * global search failed outright (see findFlightPhase's global-then-
+   * rolling structure), so a clip where the athlete's distance to the
+   * camera changed elsewhere (a running approach, most often) is not
    * checked against a reference height measured somewhere else entirely.
+   * jumpFromCom.ts's plausibility check reads this instead of ComTrack's
+   * own `staturePx` for exactly that reason.
    */
   staturePxAtJump: number
 }
@@ -69,7 +78,7 @@ export type FlightPhaseOutcome =
   | { kind: 'landing-past-end' }
 
 /** The foot is on the ground most of the clip, so a high percentile is the floor. */
-const FLOOR_PERCENTILE = 0.9
+export const FLOOR_PERCENTILE = 0.9
 /**
  * How many frames of standing to average when measuring the floor local to
  * one edge of the jump, and how many to skip next to the jump itself.
@@ -471,12 +480,16 @@ function longestRun(
 
 export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   const { times, footY, staturePx, spans } = track
-  // times.length !== footY.length should never happen — buildComTrack pushes
-  // to both arrays together, one frame at a time — but this function is
-  // exported and ComTrack does not encode the invariant in its type, so a
-  // hand-built track (tests do this) that breaks it is treated as having no
-  // usable data rather than indexing past the shorter array below.
-  if (footY.length === 0 || footY.length !== times.length || staturePx <= 0) {
+  // times.length !== footY.length (or spans.length) should never happen —
+  // buildComTrack pushes to all three arrays together, one frame at a time
+  // — but this function is exported and ComTrack does not encode the
+  // invariant in its type, so a hand-built track (tests do this) that
+  // breaks it is treated as having no usable data rather than indexing
+  // past the shorter array below.
+  if (
+    footY.length === 0 || footY.length !== times.length || spans.length !== times.length ||
+    staturePx <= 0
+  ) {
     return { kind: 'no-flight' }
   }
 
@@ -545,14 +558,17 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   // each edge walks in whichever direction its own floor requires. The
   // outward walks are capped at MAX_BOUNDARY_EXTENSION past their coarse
   // boundary — the same budget the FlightPhase.takeoffFrame/landingFrame
-  // docstrings already promise ("can pull it one frame earlier/later").
-  // Uncapped, this walk keeps extending through any consecutive run of
-  // frames the LOCAL floor calls elevated — harmless on an ordinary clip,
-  // where the standing stretch right outside the jump is flat, but on a
-  // running approach footY oscillates with every stride even before
-  // takeoff, and an uncapped walk drags several strides of run-up into the
-  // fit, corrupting the scale estimate (see the running-approach-jump
-  // design doc's real-clip investigation).
+  // docstrings already promise ("can pull it one frame earlier/later"). On
+  // the landing edge, extendBoundary below can still reclassify one further
+  // frame under its own, stricter test, so the total pull there is up to
+  // two frames, not one -- see landingFrame's docstring. Uncapped, this
+  // walk keeps extending through any consecutive run of frames the LOCAL
+  // floor calls elevated — harmless on an ordinary clip, where the standing
+  // stretch right outside the jump is flat, but on a running approach footY
+  // oscillates with every stride even before takeoff, and an uncapped walk
+  // drags several strides of run-up into the fit, corrupting the scale
+  // estimate (see the running-approach-jump design doc's real-clip
+  // investigation).
   let takeoffFrame = coarseTakeoff
   while (takeoffFrame < coarseLanding && !(takeoffFloorY - footY[takeoffFrame]! > edgeThreshold)) {
     takeoffFrame++
