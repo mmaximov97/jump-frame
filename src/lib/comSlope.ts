@@ -75,7 +75,7 @@ export function guessFlightWindow(track: ComTrack): SlopeGuess | null {
     if (hi - lo < MIN_SLOPE_WINDOW_POINTS - 1) return null
     const dt = times[hi]! - times[lo]!
     if (!(dt > 0)) return null
-    const s = staturePx[i]
+    const s = staturePx[i]!
     if (s === null || !(s > 0)) return null
     return (comY[hi]! - comY[lo]!) / dt / s
   })
@@ -83,7 +83,7 @@ export function guessFlightWindow(track: ComTrack): SlopeGuess | null {
   let takeoffIndex = -1
   let takeoffSlope = 0
   for (let i = 0; i < slope.length; i++) {
-    const v = slope[i]
+    const v = slope[i]!
     if (v !== null && v < takeoffSlope) {
       takeoffSlope = v
       takeoffIndex = i
@@ -94,7 +94,7 @@ export function guessFlightWindow(track: ComTrack): SlopeGuess | null {
   const landingThreshold = -takeoffSlope * LANDING_SLOPE_FRACTION
   let landingIndex = -1
   for (let i = takeoffIndex + 1; i < slope.length; i++) {
-    const v = slope[i]
+    const v = slope[i]!
     if (v !== null && v > landingThreshold) {
       landingIndex = i
       break
