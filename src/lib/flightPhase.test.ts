@@ -226,3 +226,52 @@ describe('findFlightPhase — rolling fallback when the athlete drifts from the 
     expect(outcome.phase.landingFrame).toBe(5)
   })
 })
+
+describe('findFlightPhase — boundary-extension walk is capped', () => {
+  /**
+   * Engineered so the GLOBAL 90th-percentile floor and the LOCAL median
+   * floor used for takeoff-edge refinement disagree about an 11-frame
+   * block right before the coarse takeoff boundary -- mirrors the gait
+   * oscillation a real running approach produces (see the
+   * running-approach-jump design doc's real-clip investigation): the foot
+   * leaves the ground a little on every stride, well before the actual
+   * jump.
+   *
+   * - A/L (130 @ 82 each): the bulk of the clip, sets the global floorY to
+   *   82.
+   * - B (24 @ 100), indices 130-153: a clean "standing" stretch placed so
+   *   it backfills most of the takeoff edge's local floor window.
+   * - D (11 @ 76), indices 154-164: the "gait" block. 82-76=6 does not
+   *   clear the global threshold (10), so longestRun never absorbs it --
+   *   but 100-76=24 clears the LOCAL takeoff floor's threshold, so each of
+   *   these 11 frames looks elevated once judged against the local
+   *   standing level instead of the global one.
+   * - F (10 @ 20), indices 165-174: the real flight -- 82-20=62 clears the
+   *   global threshold easily, so this is the only run longestRun finds:
+   *   coarseTakeoff = 165, coarseLanding = 175.
+   *
+   * Percentile math is nearest-rank, not interpolated (see stats.ts), so
+   * both cluster sizes here are chosen to keep the 90th-percentile global
+   * floor and the median local floor landing on the intended clusters with
+   * real margin, not by a hair -- shrinking A/L, growing B, or growing D
+   * changes which cluster either percentile lands on and silently breaks
+   * the fixture.
+   */
+  function gaitOscillationTrack(): ComTrack {
+    const A = Array.from({ length: 130 }, () => 82)
+    const B = Array.from({ length: 24 }, () => 100) // indices 130-153
+    const D = Array.from({ length: 11 }, () => 76) // indices 154-164 (reclaimable)
+    const F = Array.from({ length: 10 }, () => 20) // indices 165-174 (flight)
+    const L = Array.from({ length: 130 }, () => 82)
+    return track([...A, ...B, ...D, ...F, ...L])
+  }
+
+  it('reclaims at most one frame of gait oscillation into the flight, not the whole run-up', () => {
+    const phase = phaseOf(findFlightPhase(gaitOscillationTrack()))
+    // coarseTakeoff is 165 (the start of block F). The capped walk may
+    // reclaim at most 1 frame into block D (164) -- not all 11 frames of
+    // it (154), which is what the pre-fix unbounded loop did on this same
+    // fixture.
+    expect(phase.takeoffFrame).toBe(164)
+  })
+})
