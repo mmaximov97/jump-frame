@@ -542,19 +542,33 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   )
 
   // A stricter floor moves the boundary inwards, a looser one outwards, so
-  // each edge walks in whichever direction its own floor requires.
+  // each edge walks in whichever direction its own floor requires. The
+  // outward walks are capped at MAX_BOUNDARY_EXTENSION past their coarse
+  // boundary — the same budget the FlightPhase.takeoffFrame/landingFrame
+  // docstrings already promise ("can pull it one frame earlier/later").
+  // Uncapped, this walk keeps extending through any consecutive run of
+  // frames the LOCAL floor calls elevated — harmless on an ordinary clip,
+  // where the standing stretch right outside the jump is flat, but on a
+  // running approach footY oscillates with every stride even before
+  // takeoff, and an uncapped walk drags several strides of run-up into the
+  // fit, corrupting the scale estimate (see the running-approach-jump
+  // design doc's real-clip investigation).
   let takeoffFrame = coarseTakeoff
   while (takeoffFrame < coarseLanding && !(takeoffFloorY - footY[takeoffFrame]! > edgeThreshold)) {
     takeoffFrame++
   }
-  while (takeoffFrame > 1 && takeoffFloorY - footY[takeoffFrame - 1]! > edgeThreshold) takeoffFrame--
+  const takeoffExtensionFloor = Math.max(1, coarseTakeoff - MAX_BOUNDARY_EXTENSION)
+  while (takeoffFrame > takeoffExtensionFloor && takeoffFloorY - footY[takeoffFrame - 1]! > edgeThreshold) {
+    takeoffFrame--
+  }
   if (takeoffFrame >= coarseLanding) return { kind: 'no-flight' }
 
   let landingFrame = coarseLanding
   while (landingFrame > takeoffFrame + 1 && !(landingFloorY - footY[landingFrame - 1]! > edgeThreshold)) {
     landingFrame--
   }
-  while (landingFrame < times.length && landingFloorY - footY[landingFrame]! > edgeThreshold) {
+  const landingExtensionCeiling = Math.min(times.length, coarseLanding + MAX_BOUNDARY_EXTENSION)
+  while (landingFrame < landingExtensionCeiling && landingFloorY - footY[landingFrame]! > edgeThreshold) {
     landingFrame++
   }
   if (landingFrame >= times.length) return { kind: 'landing-past-end' }
