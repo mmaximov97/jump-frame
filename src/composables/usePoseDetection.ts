@@ -192,6 +192,27 @@ export function usePoseDetection(
     return { time, landmarks }
   }
 
+  /**
+   * Two distinct seeks can land on the same decoded frame — every frame is
+   * stamped with the actual presented `mediaTime` (see seekAndShow), not the
+   * requested schedule time, and whenever the selected FPS exceeds the
+   * clip's true underlying frame rate, multiple schedule entries decode to
+   * the same physical frame even though `planFullPass`'s schedule itself has
+   * no duplicate times. A duplicated timestamp would feed the same sample to
+   * the fit twice, quietly weighting it double.
+   */
+  function dedupeByTime(collected: PoseFrame[]): PoseFrame[] {
+    const seen = new Set<number>()
+    const unique: PoseFrame[] = []
+    for (const frame of collected) {
+      const key = Math.round(frame.time * 1e6)
+      if (seen.has(key)) continue
+      seen.add(key)
+      unique.push(frame)
+    }
+    return unique
+  }
+
   async function scan(
     video: HTMLVideoElement, detector: PoseLandmarker, times: number[],
     signal: AbortSignal, isCurrent: () => boolean, onProgress: (done: number) => void
@@ -292,11 +313,16 @@ export function usePoseDetection(
 
       const rate = fps.value > 0 ? fps.value : 60
       const allTimes = planFullPass(video.duration, rate)
-      const all = await scan(video, detector, allTimes, signal, isCurrent, (done) => {
+      const scanned = await scan(video, detector, allTimes, signal, isCurrent, (done) => {
         progress.value = done / allTimes.length
       })
 
       if (!isCurrent()) return
+
+      // Dedupe the ACTUAL decoded frames, not the schedule: `allTimes` never
+      // has duplicate entries, but distinct requested times can still decode
+      // to the same presented frame (see dedupeByTime's own comment).
+      const all = dedupeByTime(scanned)
 
       frames.value = all
       scatter.value = estimateScatter(all)

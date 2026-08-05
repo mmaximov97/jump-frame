@@ -34,8 +34,11 @@ const MIN_SLOPE_WINDOW_POINTS = 3
 const MIN_TAKEOFF_SLOPE = 0.3
 /**
  * How large the landing's positive slope must be, relative to the
- * magnitude of the takeoff's negative slope, to count as the matching
- * landing rather than noise. Physically a landing impact is roughly as
+ * magnitude of the takeoff's negative slope, to count as a real landing
+ * rather than noise. This is a floor on the single steepest positive slope
+ * found after takeoff (see guessFlightWindow's landing search) -- it does
+ * not affect WHICH index is picked, only whether the steepest one found is
+ * sharp enough to accept at all. Physically a landing impact is roughly as
  * abrupt as the push-off that started the flight, so this is relative to
  * the takeoff's own slope, not an independent absolute threshold. Starting
  * value, not a measured optimum.
@@ -44,12 +47,16 @@ const LANDING_SLOPE_FRACTION = 0.5
 
 /**
  * Scans the whole clip for the steepest normalized rise in centre of mass
- * (takeoff) and the next comparably steep fall after it (landing).
- * Normalized by a rolling stature estimate (the same rollingPercentile
- * machinery findFlightPhase's own rolling fallback uses) rather than a
- * fixed reference, so a clip where the athlete's distance to the camera
- * changes does not bias the comparison toward whichever part of the clip
- * happens to be closest to the camera.
+ * (takeoff) and, after it, the single steepest normalized fall (landing) --
+ * both are global argmax searches over the whole array, structurally
+ * symmetric to each other. Landing is deliberately NOT "the first fall that
+ * crosses a threshold": during real ballistic flight downward velocity
+ * grows from zero at the apex, so a first-crossing search fires well before
+ * the true landing and truncates the flight window. Normalized by a rolling
+ * stature estimate (the same rollingPercentile machinery findFlightPhase's
+ * own rolling fallback uses) rather than a fixed reference, so a clip where
+ * the athlete's distance to the camera changes does not bias the comparison
+ * toward whichever part of the clip happens to be closest to the camera.
  *
  * Deliberately does not know about MAX_FLIGHT_SECONDS, floor levels, or
  * plausibility checks -- those all belong to findFlightPhase/assess, which
@@ -91,16 +98,16 @@ export function guessFlightWindow(track: ComTrack): SlopeGuess | null {
   }
   if (takeoffIndex === -1 || -takeoffSlope < MIN_TAKEOFF_SLOPE) return null
 
-  const landingThreshold = -takeoffSlope * LANDING_SLOPE_FRACTION
   let landingIndex = -1
+  let landingSlope = 0
   for (let i = takeoffIndex + 1; i < slope.length; i++) {
     const v = slope[i]!
-    if (v !== null && v > landingThreshold) {
+    if (v !== null && v > landingSlope) {
+      landingSlope = v
       landingIndex = i
-      break
     }
   }
-  if (landingIndex === -1) return null
+  if (landingIndex === -1 || landingSlope < -takeoffSlope * LANDING_SLOPE_FRACTION) return null
 
   return { takeoffTime: times[takeoffIndex]!, landingTime: times[landingIndex]! }
 }

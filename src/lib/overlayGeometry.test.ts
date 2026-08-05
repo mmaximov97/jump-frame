@@ -79,26 +79,26 @@ describe('buildSkeleton', () => {
 describe('findFrameAt', () => {
   const FPS = 60
   const GAP = 1 / FPS
-  const COARSE_STRIDE = 6
+  const SPARSE_STRIDE = 6
 
   function clip(times: number[]): PoseFrame[] {
     return times.map((time) => ({ time, landmarks: fakeLandmarks() }))
   }
 
-  /** What the coarse pass alone leaves behind: every COARSE_STRIDE-th frame. */
-  function coarseOnly(seconds: number): number[] {
+  /** Sparse samples only: every SPARSE_STRIDE-th frame, nothing in between. */
+  function sparseOnly(seconds: number): number[] {
     const times: number[] = []
-    for (let n = 0; (n * COARSE_STRIDE) / FPS < seconds; n++) {
-      times.push((n * COARSE_STRIDE) / FPS)
+    for (let n = 0; (n * SPARSE_STRIDE) / FPS < seconds; n++) {
+      times.push((n * SPARSE_STRIDE) / FPS)
     }
     return times
   }
 
-  /** Coarse across the clip, plus every frame in [from, to) — a real scan. */
-  function coarseWithDenseWindow(seconds: number, from: number, to: number): number[] {
+  /** Sparse across the clip, plus every frame densely in [from, to). */
+  function sparseWithDenseWindow(seconds: number, from: number, to: number): number[] {
     const dense: number[] = []
     for (let n = Math.ceil(from * FPS); n < to * FPS; n++) dense.push(n / FPS)
-    return [...new Set([...coarseOnly(seconds), ...dense])].sort((a, b) => a - b)
+    return [...new Set([...sparseOnly(seconds), ...dense])].sort((a, b) => a - b)
   }
 
   const run = clip([0, 1, 2, 3, 4].map((n) => n / FPS))
@@ -112,15 +112,15 @@ describe('findFrameAt', () => {
     expect(findFrameAt(run, 1.4 / FPS, GAP)!.time).toBeCloseTo(1 / FPS, 10)
   })
 
-  it('draws nothing anywhere on a clip the dense pass never ran on', () => {
-    const frames = clip(coarseOnly(10))
+  it('draws nothing anywhere on a clip with only sparse samples', () => {
+    const frames = clip(sparseOnly(10))
     for (let n = 0; n < 10 * FPS; n++) {
       expect(findFrameAt(frames, n / FPS, GAP)).toBeNull()
     }
   })
 
   it('draws across the dense window and nowhere else', () => {
-    const frames = clip(coarseWithDenseWindow(10, 2.6, 3.4))
+    const frames = clip(sparseWithDenseWindow(10, 2.6, 3.4))
     const drawn: number[] = []
     for (let n = 0; n < 10 * FPS; n++) {
       if (findFrameAt(frames, n / FPS, GAP)) drawn.push(n / FPS)
