@@ -63,14 +63,23 @@ export function useMeasurement(
   // never seeds a side that would invalidate the OTHER already-set mark via
   // useMarkers' own out-of-order clearing (setTakeoff/setLanding each null
   // the opposite mark if the new time would put them out of order).
-  watch(analysis, (result) => {
-    if (!result) return
+  //
+  // Seeded from the whole-clip COM-slope guess (pose.guess), not from
+  // measureJump's own analysis.takeoffTime/landingTime: that candidate
+  // comes from findFlightPhase's floor/threshold search, which on a hard
+  // real clip can land inside the run-up rather than the actual jump (see
+  // docs/2026-08-05-com-slope-marker-guess-design.md section 3.3).
+  // measureJump keeps computing its own candidate independently either way
+  // — this only changes where the initial markers land, not the
+  // measurement itself.
+  watch(pose.guess, (guess) => {
+    if (!guess) return
     const takeoff = markers.takeoffTime.value
     const landing = markers.landingTime.value
-    const canSeedTakeoff = takeoff === null && (landing === null || result.takeoffTime < landing)
-    const canSeedLanding = landing === null && (takeoff === null || result.landingTime > takeoff)
-    if (canSeedTakeoff) markers.setTakeoff(result.takeoffTime)
-    if (canSeedLanding) markers.setLanding(result.landingTime)
+    const canSeedTakeoff = takeoff === null && (landing === null || guess.takeoffTime < landing)
+    const canSeedLanding = landing === null && (takeoff === null || guess.landingTime > takeoff)
+    if (canSeedTakeoff) markers.setTakeoff(guess.takeoffTime)
+    if (canSeedLanding) markers.setLanding(guess.landingTime)
   })
 
   // Non-null only while the current marks are still the exact frames this
