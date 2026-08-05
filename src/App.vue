@@ -6,6 +6,7 @@ import { cmToUnit, unitLabel } from './composables/useJumpCalculation'
 import { useMeasurement } from './composables/useMeasurement'
 import { useJumpHistory } from './composables/useJumpHistory'
 import { captureFrameThumbnail } from './composables/captureFrameThumbnail'
+import { useServerBodyDetection } from './composables/useServerBodyDetection'
 import VideoUpload from './components/VideoUpload.vue'
 import VideoPlayer from './components/VideoPlayer.vue'
 import PoseOverlay from './components/PoseOverlay.vue'
@@ -70,6 +71,20 @@ const {
   hasAnyMarker,
   autoDetectInfo,
 } = useMeasurement(videoRef, isVideoLoaded, currentTime, duration, pause)
+
+// Dev-only trigger for the server-side body-detection pipe (Task 4's
+// useServerBodyDetection) -- proves the ai-lab round-trip works in
+// isolation, independent of the existing MediaPipe pipeline `pose` runs
+// above. Not wired into measureJump; see docs/2026-08-05-server-body-
+// detection-plumbing-design.md section 7. Point it at a running ai-lab
+// gateway via a gitignored .env.local:
+//   VITE_AI_LAB_BASE_URL=http://127.0.0.1:8080
+//   VITE_AI_LAB_API_KEY=<a body_detection-scoped key>
+const bodyDetection = useServerBodyDetection(
+  videoRef,
+  import.meta.env.VITE_AI_LAB_BASE_URL,
+  import.meta.env.VITE_AI_LAB_API_KEY
+)
 
 const resultsAnchor = ref<HTMLElement | null>(null)
 const videoPlayer = ref<InstanceType<typeof VideoPlayer> | null>(null)
@@ -350,6 +365,27 @@ onUnmounted(() => {
             >
               {{ pose.result.value.verdict.message }}
             </p>
+          </div>
+
+          <!-- Dev-only: server body-detection pipe (Task 5). Plumbing-proof
+               only -- not wired into measurement, see useServerBodyDetection.ts. -->
+          <div class="rounded-xl border border-dashed border-amber-500/40 bg-surface-light p-3 text-xs">
+            <button
+              class="w-full min-h-11 rounded-lg border border-amber-500/50 text-amber-400 text-sm font-medium
+                     hover:bg-amber-500/10 transition"
+              @click="bodyDetection.run()"
+            >
+              Body detection (server, dev)
+            </button>
+
+            <p v-if="bodyDetection.status.value !== 'idle'" class="mt-2 text-slate-400">
+              Status: {{ bodyDetection.status.value }}
+            </p>
+            <p v-if="bodyDetection.error.value" class="mt-2 text-rose-400">{{ bodyDetection.error.value }}</p>
+            <pre
+              v-if="bodyDetection.status.value === 'done'"
+              class="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-words text-slate-300"
+            >{{ JSON.stringify(bodyDetection.result.value, null, 2) }}</pre>
           </div>
 
           <!-- Desktop: result stays beside the video, no separate scroll section -->
