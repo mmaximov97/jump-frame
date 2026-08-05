@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findFlightPhase } from './flightPhase'
+import { findFlightPhase, ROLLING_WINDOW_SECONDS } from './flightPhase'
 import { buildComTrack } from './comTrack'
 import { generateJump } from './testing/syntheticJumper'
 import type { ComTrack } from './comTrack'
@@ -12,6 +12,10 @@ function track(footY: number[], fps = 60): ComTrack {
     comY: footY.map(() => 0),
     footY,
     staturePx: 500,
+    // A constant 450 makes percentile(spans, 0.9) / 0.9 work out to exactly
+    // 500 -- the same staturePx these tests already hard-code -- so every
+    // existing assertion keeps its original meaning unchanged.
+    spans: footY.map(() => 450),
   }
 }
 
@@ -133,5 +137,141 @@ describe('findFlightPhase', () => {
     ))
     expect(trailingPhase.landingFrame).toBeLessThan(6)
     expect(Number.isFinite(trailingPhase.landingTime)).toBe(true)
+  })
+})
+
+describe('findFlightPhase — rolling fallback when the athlete drifts from the camera', () => {
+  const FPS = 30
+
+  /**
+   * A clip where the athlete moves steadily away from the camera (footY and
+   * the nose-to-foot span both shrink) for 6s, then does a short, real jump
+   * at the new distance, then lands and stays there -- footY never returns
+   * to the original level. Against a single whole-clip floor (dominated by
+   * the brief initial stretch near the camera), this whole drifting stretch
+   * reads as one continuous "airborne" run that never comes back down
+   * before the clip ends -- exactly what happened on the real clip that
+   * motivated this fallback (see the running-approach-jump design doc).
+   */
+  function driftingClip(): ComTrack {
+    const times: number[] = []
+    const footY: number[] = []
+    const spans: number[] = []
+    const push = (t: number, foot: number, span: number) => {
+      times.push(t)
+      footY.push(foot)
+      spans.push(span)
+    }
+
+    // 1s standing near the camera.
+    for (let i = 0; i < FPS * 1; i++) push(i / FPS, 900, 800)
+
+    // Drifting away, for comfortably longer than ROLLING_WINDOW_SECONDS --
+    // wide enough that the window actually rolls across real variation
+    // instead of seeing the whole drift as one span.
+    const driftSeconds = ROLLING_WINDOW_SECONDS * 1.5
+    const driftFrames = Math.round(FPS * driftSeconds)
+    for (let i = 0; i < driftFrames; i++) {
+      const t = FPS * 1 + i
+      const progress = i / driftFrames
+      push(t / FPS, 900 - progress * 500, 800 - progress * 450) // 900->400, 800->350
+    }
+
+    // A short, real jump at the new (arrived) distance.
+    const jumpStartFrame = FPS * 1 + driftFrames
+    for (let i = 0; i < Math.round(FPS * 0.3); i++) {
+      push((jumpStartFrame + i) / FPS, 280, 350)
+    }
+
+    // Standing at the new distance -- never recovers the original footY.
+    const afterFrame = jumpStartFrame + Math.round(FPS * 0.3)
+    for (let i = 0; i < FPS * 2; i++) push((afterFrame + i) / FPS, 400, 350)
+
+    return { times, comY: footY.map(() => 0), footY, staturePx: 800 / 0.9, spans }
+  }
+
+  it('recovers a short flight instead of landing-past-end', () => {
+    const outcome = findFlightPhase(driftingClip())
+    expect(outcome.kind === 'found' || outcome.kind === 'too-long').toBe(true)
+  })
+
+  it('places takeoff near the real jump, not wherever the drift itself started or ended', () => {
+    const outcome = findFlightPhase(driftingClip())
+    if (outcome.kind !== 'found' && outcome.kind !== 'too-long') {
+      throw new Error(`expected a resolved phase, got '${outcome.kind}'`)
+    }
+    const jumpStartS = 1 + ROLLING_WINDOW_SECONDS * 1.5
+    expect(outcome.phase.takeoffTime).toBeGreaterThan(jumpStartS - 0.5)
+    expect(outcome.phase.takeoffTime).toBeLessThan(jumpStartS + 0.5)
+  })
+
+  it('reads the stature at the jump, not the near-camera stretch at the start', () => {
+    const outcome = findFlightPhase(driftingClip())
+    if (outcome.kind !== 'found' && outcome.kind !== 'too-long') {
+      throw new Error(`expected a resolved phase, got '${outcome.kind}'`)
+    }
+    // The near-camera stature (800/0.9 ~= 889px) is what the OLD whole-clip
+    // staturePx reports. The stature at the jump, where the athlete is
+    // smaller in frame, must be noticeably less than that.
+    expect(outcome.phase.staturePxAtJump).toBeLessThan(700)
+  })
+
+  it('does not engage the rolling fallback on an ordinary, non-drifting jump', () => {
+    // Same shape as this file's existing "finds the boundaries" fixture --
+    // pins that the fallback path is inert when the global pass already
+    // succeeds, by checking the answer is unchanged from before this task.
+    const outcome = findFlightPhase(track([100, 100, 80, 60, 80, 100, 100]))
+    if (outcome.kind !== 'found') throw new Error(`expected 'found', got '${outcome.kind}'`)
+    expect(outcome.phase.takeoffFrame).toBe(2)
+    expect(outcome.phase.landingFrame).toBe(5)
+  })
+})
+
+describe('findFlightPhase — boundary-extension walk is capped', () => {
+  /**
+   * Engineered so the GLOBAL 90th-percentile floor and the LOCAL median
+   * floor used for takeoff-edge refinement disagree about an 11-frame
+   * block right before the coarse takeoff boundary -- mirrors the gait
+   * oscillation a real running approach produces (see the
+   * running-approach-jump design doc's real-clip investigation): the foot
+   * leaves the ground a little on every stride, well before the actual
+   * jump.
+   *
+   * - A/L (130 @ 82 each): the bulk of the clip, sets the global floorY to
+   *   82.
+   * - B (24 @ 100), indices 130-153: a clean "standing" stretch placed so
+   *   it backfills most of the takeoff edge's local floor window.
+   * - D (11 @ 76), indices 154-164: the "gait" block. 82-76=6 does not
+   *   clear the global threshold (10), so longestRun never absorbs it --
+   *   but 100-76=24 clears the LOCAL takeoff floor's threshold, so each of
+   *   these 11 frames looks elevated once judged against the local
+   *   standing level instead of the global one.
+   * - F (10 @ 20), indices 165-174: the real flight -- 82-20=62 clears the
+   *   global threshold easily, so this is the only run longestRun finds:
+   *   coarseTakeoff = 165, coarseLanding = 175.
+   *
+   * Percentile math is nearest-rank, not interpolated (see stats.ts), so
+   * both cluster sizes here are chosen to keep the 90th-percentile global
+   * floor and the median local floor landing on the intended clusters with
+   * real margin, not by a hair -- shrinking A/L, growing B, or growing D
+   * changes which cluster either percentile lands on and silently breaks
+   * the fixture.
+   */
+  function gaitOscillationTrack(): ComTrack {
+    const A = Array.from({ length: 130 }, () => 82)
+    const B = Array.from({ length: 24 }, () => 100) // indices 130-153
+    const D = Array.from({ length: 11 }, () => 76) // indices 154-164 (reclaimable)
+    const F = Array.from({ length: 10 }, () => 20) // indices 165-174 (flight)
+    const L = Array.from({ length: 130 }, () => 82)
+    return track([...A, ...B, ...D, ...F, ...L])
+  }
+
+  it('reclaims at most one frame of gait oscillation into the flight, not the whole run-up', () => {
+    const phase = phaseOf(findFlightPhase(gaitOscillationTrack()))
+    // coarseTakeoff is 165 (the start of block F). The capped walk may
+    // reclaim at most 1 frame into block D (164) -- not all 11 frames of
+    // it (154), which is what the pre-fix unbounded loop did on this same
+    // fixture.
+    expect(phase.takeoffFrame).toBe(164)
   })
 })

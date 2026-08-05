@@ -252,3 +252,25 @@ describe('acceptance: noise and failure modes', () => {
     }
   })
 })
+
+describe('acceptance: a small apparent-scale wobble during the approach', () => {
+  // approachScaleRatio's drift model only moves the athlete's scale ABOVE a
+  // fixed floor line (see syntheticJumper.ts) -- it does not move footY
+  // itself, unlike a real running approach (see realClipFixture.test.ts,
+  // built from real MediaPipe output where footY genuinely drifts). Because
+  // computeFootY medians six foot landmarks and four of them (heel, toe) sit
+  // exactly on that fixed floor line regardless of scale, findFlightPhase's
+  // rolling fallback can never engage via this generator option, at any
+  // ratio or approach length -- confirmed by sweeping 30+ parameter
+  // combinations during planning. This test is NOT a proof that the rolling
+  // mechanism survives a running approach end-to-end; that proof is
+  // realClipFixture.test.ts. This test only pins that a mild apparent-scale
+  // change (camera micro-jitter, a slight lens wobble) doesn't regress the
+  // ordinary, global-path measurement.
+  it('does not disturb an ordinary measurement under a mild scale wobble', () => {
+    const clip = generateJump({ ...BASE, approachScaleRatio: 1.15, standFrames: 90 })
+    const result = measureJump(clip.frames, VIDEO)
+    expect(result.verdict.kind).toBe('ok')
+    expect(Math.abs(result.analysis!.comHeightCm - 50)).toBeLessThan(1)
+  })
+})

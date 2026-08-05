@@ -70,16 +70,24 @@ export interface ComTrack {
   footY: number[]
   /** Standing height in pixels, used to normalize thresholds by the person. */
   staturePx: number
+  /**
+   * Nose-to-foot pixel span, one entry per frame, in the same order as
+   * `times`/`footY`/`comY` — NOT sorted, unlike the array `staturePx` is
+   * distilled from. flightPhase.ts's rolling stature estimate needs each
+   * span paired with the instant it was measured at; `staturePx` alone
+   * collapses that correspondence into a single number for the whole clip.
+   */
+  spans: number[]
 }
 
 /** Where the nose sits as a fraction of stature. Approximate on purpose. */
-const NOSE_HEIGHT_FRACTION = 0.9
+export const NOSE_HEIGHT_FRACTION = 0.9
 
 /**
  * Which percentile of (foot - nose) counts as "standing upright". The person
  * is tallest fully extended; a plain maximum would latch onto a noise spike.
  */
-const STANDING_PERCENTILE = 0.9
+export const STANDING_PERCENTILE = 0.9
 
 export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
   const times: number[] = []
@@ -108,16 +116,13 @@ export function buildComTrack(frames: PoseFrame[], video: VideoSize): ComTrack {
     spans.push(foot - frame.landmarks[LM.NOSE]!.y * video.height)
   }
 
-  spans.sort((a, b) => a - b)
-  // spans.length, not frames.length: a clip full of malformed (skipped)
-  // frames must fall back to 0 just as an empty clip does, and percentile's
-  // own empty-array guard already returns 0 — this condition just makes
-  // that intent explicit for a reader, rather than relying on frames.length
-  // happening to be 0 too (true before landmark-length skipping existed,
-  // not necessarily true now that frames.length and spans.length can differ).
-  const staturePx = spans.length === 0
+  // Distilled from a SORTED COPY. `spans` itself stays in frame order — it
+  // is returned as part of ComTrack, and flightPhase.ts's rolling stature
+  // needs each span paired with the time it was measured at.
+  const sortedSpans = [...spans].sort((a, b) => a - b)
+  const staturePx = sortedSpans.length === 0
     ? 0
-    : percentile(spans, STANDING_PERCENTILE) / NOSE_HEIGHT_FRACTION
+    : percentile(sortedSpans, STANDING_PERCENTILE) / NOSE_HEIGHT_FRACTION
 
-  return { times, comY, footY, staturePx }
+  return { times, comY, footY, staturePx, spans }
 }

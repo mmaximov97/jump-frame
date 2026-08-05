@@ -7,6 +7,9 @@ import {
 import { planCoarsePass, planFinePass } from '../lib/framePlan'
 import { estimateScatter, type LandmarkScatter } from '../lib/landmarkScatter'
 import { measureJump, type JumpAnalysis, type Verdict } from '../lib/jumpFromCom'
+import { ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, FLOOR_PERCENTILE } from '../lib/flightPhase'
+import { STANDING_PERCENTILE } from '../lib/comTrack'
+import { rollingMedian, rollingPercentile } from '../lib/stats'
 import { LANDMARK_COUNT, LM, type Landmark, type PoseFrame } from '../lib/poseTypes'
 
 export type DetectionStatus = 'idle' | 'loading' | 'scanning' | 'done' | 'error' | 'cancelled'
@@ -15,6 +18,33 @@ const ASSETS = `${import.meta.env.BASE_URL}mediapipe`
 
 /** A foot this far above the clip's floor level counts as airborne. */
 const COARSE_AIRBORNE_FRACTION = 0.02
+
+/**
+ * Loosens the detector's default 0.5 confidence gate on real footage where
+ * MediaPipe otherwise loses the person outright — measured on a clip shot
+ * from behind: default confidence found a full pose in 81 of 156 frames;
+ * lowering both gates to 0.1 found 104. The gap matters most exactly where
+ * detection is worst: in the single hardest ~1 s stretch of that clip, 0.1
+ * recovered 19 of 34 frames against 3 at the default.
+ *
+ * Raising the model tier (lite → full → heavy) does not substitute for this:
+ * all three bundle the identical pose_detector.tflite (the stage that decides
+ * whether a person is there at all) and differ only in the landmark
+ * regressor that runs after a detection succeeds — on that same clip, lite
+ * through heavy recovered 81, 83 and 89 of 156, and in the hardest stretch
+ * only 3, 2 and 3 of 34. The confidence gate is the lever that actually
+ * moves; the model tier is not.
+ *
+ * A lower gate does admit noisier frames, but nothing downstream trusts a
+ * frame just because it was detected: `assess()`'s plausibility checks
+ * (stature bounds, fit R², flight-time agreement) exist precisely to catch a
+ * bad frame's fallout, and reject or flag the measurement rather than report
+ * it as clean.
+ */
+const DETECTION_CONFIDENCE = {
+  minPoseDetectionConfidence: 0.1,
+  minPosePresenceConfidence: 0.1,
+}
 
 /**
  * How long a single seek may go without a presented frame before it is
@@ -76,6 +106,7 @@ export function usePoseDetection(
         baseOptions: { ...baseOptions, delegate: 'GPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
+        ...DETECTION_CONFIDENCE,
       })
     } catch {
       // Some browsers and older GPUs reject the WebGL delegate. CPU is slower
@@ -84,6 +115,7 @@ export function usePoseDetection(
         baseOptions: { ...baseOptions, delegate: 'CPU' },
         runningMode: 'IMAGE',
         numPoses: 1,
+        ...DETECTION_CONFIDENCE,
       })
     }
     if (disposed) {
@@ -184,10 +216,37 @@ export function usePoseDetection(
   }
 
   /**
+   * Same displacement test the pixel-space version below uses, applied once
+   * with a given floor/stature source. Shared so the global and rolling
+   * passes below can only differ in what floor/stature they read, never in
+   * how a sample gets classified from them.
+   */
+  function classify(
+    footY: number[], floor: (i: number) => number, stature: (i: number) => number
+  ): number[] {
+    const indices: number[] = []
+    for (let i = 0; i < footY.length; i++) {
+      const s = stature(i)
+      if (!(s > 0)) continue
+      if (floor(i) - footY[i]! > COARSE_AIRBORNE_FRACTION * s) indices.push(i)
+    }
+    return indices
+  }
+
+  /**
    * Which coarse samples had a foot clear of the clip's floor level.
    *
    * A deliberately crude cousin of `findFlightPhase` — it only has to say
    * roughly where to look closer, so it skips the sub-frame work entirely.
+   *
+   * Global floor/stature first, exactly as before this fallback existed.
+   * Rolling is tried only if the global pass finds nothing, or finds a
+   * stretch that runs to the very last coarse sample without coming back
+   * down — the same failure shape flightPhase.ts's own rolling fallback
+   * exists for (see its docstring): the athlete's distance to the camera
+   * changed during the clip, so the whole-clip floor no longer describes
+   * "standing" anywhere past where it was measured. See the
+   * running-approach-jump design doc.
    */
   function airborneIndices(coarse: PoseFrame[]): number[] {
     if (coarse.length === 0) return []
@@ -197,22 +256,40 @@ export function usePoseDetection(
         f.landmarks[LM.LEFT_FOOT_INDEX]!.y, f.landmarks[LM.RIGHT_FOOT_INDEX]!.y
       )
     )
-    const sorted = [...footY].sort((a, b) => a - b)
-    const floor = sorted[Math.min(sorted.length - 1, Math.round(0.9 * (sorted.length - 1)))]!
     const noseY = coarse.map((f) => f.landmarks[LM.NOSE]!.y)
-    const stature = Math.max(...footY.map((y, i) => y - noseY[i]!))
+    const spans = footY.map((y, i) => y - noseY[i]!)
+
+    const sorted = [...footY].sort((a, b) => a - b)
+    const globalFloor = sorted[Math.min(sorted.length - 1, Math.round(FLOOR_PERCENTILE * (sorted.length - 1)))]!
+    // Deliberately a different statistic than the rolling pass below
+    // (max vs. a percentile) -- this composable is a coarse heuristic for
+    // where to sample densely, not the final measurement (see
+    // findFlightPhase for that), and changing this to match would be a
+    // behavior change, not a naming cleanup.
+    const globalStature = Math.max(...spans)
     // A degenerate detection (nose at or below foot level in every frame)
     // sends the threshold to zero or negative, which then reads nearly every
     // sample as airborne — measured: 50 of 50 fine-pass seeks, roughly six
     // times the detector calls, before the pipeline downstream correctly
-    // refuses the result anyway. Refuse to flag anything here instead.
-    if (!(stature > 0)) return []
-    const threshold = COARSE_AIRBORNE_FRACTION * stature
-    const indices: number[] = []
-    for (let i = 0; i < footY.length; i++) {
-      if (floor - footY[i]! > threshold) indices.push(i)
+    // refuses the result anyway. Refuse to flag anything here instead, on
+    // either pass — a nose reading at or below the foot is not something a
+    // rolling window fixes.
+    if (!(globalStature > 0)) return []
+
+    const globalIndices = classify(footY, () => globalFloor, () => globalStature)
+    if (globalIndices.length > 0 && globalIndices[globalIndices.length - 1]! < footY.length - 1) {
+      return globalIndices
     }
-    return indices
+
+    const times = coarse.map((f) => f.time)
+    const rollingFloor = rollingMedian(times, footY, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS)
+    const rollingStature = rollingPercentile(times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, STANDING_PERCENTILE)
+    const rollingIndices = classify(
+      footY,
+      (i) => rollingFloor[i] ?? globalFloor,
+      (i) => rollingStature[i] ?? globalStature
+    )
+    return rollingIndices.length > 0 ? rollingIndices : globalIndices
   }
 
   /**

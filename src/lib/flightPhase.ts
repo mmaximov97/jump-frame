@@ -1,14 +1,16 @@
-import { percentile } from './stats'
+import { percentile, rollingMedian, rollingPercentile } from './stats'
 import { fitParabola } from './parabolaFit'
-import type { ComTrack } from './comTrack'
+import { NOSE_HEIGHT_FRACTION, STANDING_PERCENTILE, type ComTrack } from './comTrack'
 
 export interface FlightPhase {
   /**
    * The sub-frame-corrected takeoff boundary frame. This is usually, but not
    * always, the first frame the coarse AIRBORNE_THRESHOLD_FRACTION test
-   * calls airborne — reclassification (see extendBoundary) can pull it one
-   * frame earlier (MAX_BOUNDARY_EXTENSION) when the threshold itself lagged
-   * the true takeoff. The one guarantee callers can rely on is
+   * calls airborne — reclassification against a locally-computed floor (see
+   * findFlightPhase's takeoff boundary-refinement walk, not extendBoundary,
+   * which never runs on this edge) can pull it one frame earlier
+   * (MAX_BOUNDARY_EXTENSION) when the threshold itself lagged the true
+   * takeoff. The one guarantee callers can rely on is
    * `takeoffTime ∈ [times[takeoffFrame - 1], times[takeoffFrame]]` (or
    * `takeoffTime === times[0]` when `takeoffFrame === 0`) — not that
    * `floorY - footY[takeoffFrame] > threshold`.
@@ -16,16 +18,32 @@ export interface FlightPhase {
   takeoffFrame: number
   /**
    * The sub-frame-corrected landing boundary frame. Symmetric to
-   * `takeoffFrame`: usually the first frame back below the coarse threshold
-   * after the airborne run, but reclassification can push it one frame
-   * later. Guarantee: `landingTime ∈ [times[landingFrame - 1],
-   * times[landingFrame]]`.
+   * `takeoffFrame`'s local-floor reclassification, capped the same way at
+   * MAX_BOUNDARY_EXTENSION -- but landing also passes through
+   * `extendBoundary` afterward (the one boundary-refinement mechanism that
+   * DOES run on this edge), which can reclassify one further frame under
+   * its own, stricter test. So this edge can move up to two frames past the
+   * coarse threshold crossing, not one. Guarantee: `landingTime ∈
+   * [times[landingFrame - 1], times[landingFrame]]`.
    */
   landingFrame: number
   /** Sub-frame takeoff instant, seconds. */
   takeoffTime: number
   /** Sub-frame landing instant, seconds. */
   landingTime: number
+  /**
+   * The stature (pixels) this jump was actually measured against. Equal to
+   * the whole-clip `staturePx` whenever the global floor/threshold search
+   * below found and fully resolved a candidate run -- the common case.
+   * Only read from a rolling window near the takeoff instant when that
+   * global search failed outright (see findFlightPhase's global-then-
+   * rolling structure), so a clip where the athlete's distance to the
+   * camera changed elsewhere (a running approach, most often) is not
+   * checked against a reference height measured somewhere else entirely.
+   * jumpFromCom.ts's plausibility check reads this instead of ComTrack's
+   * own `staturePx` for exactly that reason.
+   */
+  staturePxAtJump: number
 }
 
 /**
@@ -60,7 +78,7 @@ export type FlightPhaseOutcome =
   | { kind: 'landing-past-end' }
 
 /** The foot is on the ground most of the clip, so a high percentile is the floor. */
-const FLOOR_PERCENTILE = 0.9
+export const FLOOR_PERCENTILE = 0.9
 /**
  * How many frames of standing to average when measuring the floor local to
  * one edge of the jump, and how many to skip next to the jump itself.
@@ -80,6 +98,42 @@ const MIN_FLOOR_WINDOW_FRAMES = 5
 const TAKEOFF_LOOKBACK_FRAMES = 2
 /** Airborne once the foot clears this fraction of the person's own height. */
 const AIRBORNE_THRESHOLD_FRACTION = 0.02
+/**
+ * Width of the rolling window used to recover a candidate airborne run when
+ * the whole-clip floor/stature already failed to find one — see
+ * findFlightPhase's global-then-rolling structure below, and the
+ * running-approach-jump design doc.
+ *
+ * Two requirements pull in opposite directions. The window must be wider
+ * than the longest plausible jump (MAX_FLIGHT_SECONDS, 1.5s) with real
+ * margin, or the jump itself drags the median along with it — at 2s a 1.5s
+ * jump is 75% of the window, nowhere near safe. It must also be narrower
+ * than how fast a real approach changes depth, or the drift smears across
+ * the window and stops looking different from standing still.
+ *
+ * 4s gives a 1.5s jump 37.5% of the window (comfortable margin under the 50%
+ * a median needs to stay anchored to the standing majority) while staying
+ * under half the ~1.5-2s approach measured on the real clip that motivated
+ * this. Starting point, not a measured optimum — tighten it the same way
+ * EDGE_FIT_FRAMES below was tightened, once a broader set of real clips
+ * exists to sweep against.
+ *
+ * This is never applied to a clip the global pass already resolved — see
+ * findFlightPhase — which is what keeps an artificially slow-motion-stretched
+ * flight (this file's own MAX_FLIGHT_SECONDS tests exercise one at 8x real
+ * time, several seconds long) from ever reaching this window at all: that
+ * scenario already succeeds via the unchanged global path today.
+ */
+export const ROLLING_WINDOW_SECONDS = 4
+
+/**
+ * Below this many samples in the rolling window, treat that index as if the
+ * window were empty (fall back to the whole-clip value). Mirrors
+ * MIN_FLOOR_WINDOW_FRAMES's reasoning below, applied to a window defined in
+ * time rather than a fixed slice of the array — matters most on the sparse,
+ * coarse-only stretches usePoseDetection.ts's two-pass frame walk produces.
+ */
+export const MIN_ROLLING_POINTS = 5
 /**
  * Nobody stays in the air this long; a longer run is not an ordinary jump —
  * but it is not thrown away either (see FlightPhaseOutcome's 'too-long').
@@ -398,25 +452,20 @@ function localFloor(footY: number[], from: number, to: number, fallback: number)
   return percentile(footY.slice(lo, hi).sort((a, b) => a - b), 0.5)
 }
 
-export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
-  const { times, footY, staturePx } = track
-  // times.length !== footY.length should never happen — buildComTrack pushes
-  // to both arrays together, one frame at a time — but this function is
-  // exported and ComTrack does not encode the invariant in its type, so a
-  // hand-built track (tests do this) that breaks it is treated as having no
-  // usable data rather than indexing past the shorter array below.
-  if (footY.length === 0 || footY.length !== times.length || staturePx <= 0) {
-    return { kind: 'no-flight' }
-  }
-
-  const floorY = percentile([...footY].sort((a, b) => a - b), FLOOR_PERCENTILE)
-  const threshold = AIRBORNE_THRESHOLD_FRACTION * staturePx
-
+/**
+ * The longest contiguous run of indices (0..length-1) where `isAirborne(i)`
+ * holds, or null if none exists. Shared by the global and rolling candidate
+ * searches in findFlightPhase below — they differ only in what "airborne"
+ * means at each index, never in how the best run is picked.
+ */
+function longestRun(
+  length: number, isAirborne: (i: number) => boolean
+): { start: number; length: number } | null {
   let bestStart = -1
   let bestLength = 0
   let start = -1
-  for (let i = 0; i <= footY.length; i++) {
-    const airborne = i < footY.length && floorY - footY[i]! > threshold
+  for (let i = 0; i <= length; i++) {
+    const airborne = i < length && isAirborne(i)
     if (airborne && start === -1) start = i
     if (!airborne && start !== -1) {
       if (i - start > bestLength) {
@@ -426,11 +475,72 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
       start = -1
     }
   }
-  if (bestStart === -1) return { kind: 'no-flight' }
+  return bestStart === -1 ? null : { start: bestStart, length: bestLength }
+}
 
-  const coarseTakeoff = bestStart
-  const coarseLanding = bestStart + bestLength
+export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
+  const { times, footY, staturePx, spans } = track
+  // times.length !== footY.length (or spans.length) should never happen —
+  // buildComTrack pushes to all three arrays together, one frame at a time
+  // — but this function is exported and ComTrack does not encode the
+  // invariant in its type, so a hand-built track (tests do this) that
+  // breaks it is treated as having no usable data rather than indexing
+  // past the shorter array below.
+  if (
+    footY.length === 0 || footY.length !== times.length || spans.length !== times.length ||
+    staturePx <= 0
+  ) {
+    return { kind: 'no-flight' }
+  }
+
+  const floorY = percentile([...footY].sort((a, b) => a - b), FLOOR_PERCENTILE)
+  const threshold = AIRBORNE_THRESHOLD_FRACTION * staturePx
+
+  const globalRun = longestRun(footY.length, (i) => floorY - footY[i]! > threshold)
+
+  // The rolling pass exists for exactly one situation: the athlete's
+  // distance to the camera changed during the clip, so the single
+  // whole-clip floor/stature above no longer describes "standing" anywhere
+  // but where it was measured — the clip past that point can read as one
+  // continuous "airborne" run relative to it (see the running-approach-jump
+  // design doc). It is tried only as a fallback, and only when the global
+  // pass already failed outright: no candidate at all, or a candidate whose
+  // landing runs off the end of the clip. Never when the global pass
+  // already found and fully resolved a run — an artificially
+  // slow-motion-stretched flight (this file's own MAX_FLIGHT_SECONDS tests
+  // exercise one at 8x real time) is exactly the shape a duration-based gate
+  // would also try to roll-detrend, and rolling handles that badly: the
+  // window ends up narrower than the artificial flight itself, so it would
+  // read the flight's own moving foot as "the floor". Gating on the global
+  // pass's own outcome instead means that scenario is never touched — it
+  // already succeeds today, via the unchanged path above, and stays on it.
+  let staturePxAtJump = staturePx
+  let bestRun = globalRun
+  if (!globalRun || globalRun.start + globalRun.length >= times.length) {
+    const rollingFloorY = rollingMedian(times, footY, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS)
+    const rollingStaturePx = rollingPercentile(
+      times, spans, ROLLING_WINDOW_SECONDS, MIN_ROLLING_POINTS, STANDING_PERCENTILE
+    ).map((span) => (span === null ? null : span / NOSE_HEIGHT_FRACTION))
+
+    const rollingRun = longestRun(footY.length, (i) => {
+      const localFloorY = rollingFloorY[i] ?? floorY
+      const localStaturePx = rollingStaturePx[i] ?? staturePx
+      return localFloorY - footY[i]! > AIRBORNE_THRESHOLD_FRACTION * localStaturePx
+    })
+
+    if (rollingRun && (!globalRun || rollingRun.start + rollingRun.length < times.length)) {
+      bestRun = rollingRun
+      staturePxAtJump = rollingStaturePx[rollingRun.start] ?? staturePx
+    }
+  }
+
+  if (!bestRun) return { kind: 'no-flight' }
+
+  const coarseTakeoff = bestRun.start
+  const coarseLanding = bestRun.start + bestRun.length
   if (coarseLanding >= times.length) return { kind: 'landing-past-end' }
+
+  const edgeThreshold = AIRBORNE_THRESHOLD_FRACTION * staturePxAtJump
 
   // Re-derive each boundary against the standing level on its own side. The
   // global floor above is kept for WHICH run is the jump — a question the
@@ -445,19 +555,36 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   )
 
   // A stricter floor moves the boundary inwards, a looser one outwards, so
-  // each edge walks in whichever direction its own floor requires.
+  // each edge walks in whichever direction its own floor requires. The
+  // outward walks are capped at MAX_BOUNDARY_EXTENSION past their coarse
+  // boundary — the same budget the FlightPhase.takeoffFrame/landingFrame
+  // docstrings already promise ("can pull it one frame earlier/later"). On
+  // the landing edge, extendBoundary below can still reclassify one further
+  // frame under its own, stricter test, so the total pull there is up to
+  // two frames, not one -- see landingFrame's docstring. Uncapped, this
+  // walk keeps extending through any consecutive run of frames the LOCAL
+  // floor calls elevated — harmless on an ordinary clip, where the standing
+  // stretch right outside the jump is flat, but on a running approach footY
+  // oscillates with every stride even before takeoff, and an uncapped walk
+  // drags several strides of run-up into the fit, corrupting the scale
+  // estimate (see the running-approach-jump design doc's real-clip
+  // investigation).
   let takeoffFrame = coarseTakeoff
-  while (takeoffFrame < coarseLanding && !(takeoffFloorY - footY[takeoffFrame]! > threshold)) {
+  while (takeoffFrame < coarseLanding && !(takeoffFloorY - footY[takeoffFrame]! > edgeThreshold)) {
     takeoffFrame++
   }
-  while (takeoffFrame > 1 && takeoffFloorY - footY[takeoffFrame - 1]! > threshold) takeoffFrame--
+  const takeoffExtensionFloor = Math.max(1, coarseTakeoff - MAX_BOUNDARY_EXTENSION)
+  while (takeoffFrame > takeoffExtensionFloor && takeoffFloorY - footY[takeoffFrame - 1]! > edgeThreshold) {
+    takeoffFrame--
+  }
   if (takeoffFrame >= coarseLanding) return { kind: 'no-flight' }
 
   let landingFrame = coarseLanding
-  while (landingFrame > takeoffFrame + 1 && !(landingFloorY - footY[landingFrame - 1]! > threshold)) {
+  while (landingFrame > takeoffFrame + 1 && !(landingFloorY - footY[landingFrame - 1]! > edgeThreshold)) {
     landingFrame--
   }
-  while (landingFrame < times.length && landingFloorY - footY[landingFrame]! > threshold) {
+  const landingExtensionCeiling = Math.min(times.length, coarseLanding + MAX_BOUNDARY_EXTENSION)
+  while (landingFrame < landingExtensionCeiling && landingFloorY - footY[landingFrame]! > edgeThreshold) {
     landingFrame++
   }
   if (landingFrame >= times.length) return { kind: 'landing-past-end' }
@@ -480,7 +607,7 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
   // EDGE_FIT_FRAMES + MAX_BOUNDARY_EXTENSION regardless of how long the
   // airborne run is.
   const trailingExtended = extendBoundary(
-    times, footY, landingFloorY, threshold, trailing, 1, times.length - 1
+    times, footY, landingFloorY, edgeThreshold, trailing, 1, times.length - 1
   )
 
   const finalTakeoffFrame = takeoffFrame
@@ -551,7 +678,7 @@ export function findFlightPhase(track: ComTrack): FlightPhaseOutcome {
 
   const phase: FlightPhase = {
     takeoffFrame: finalTakeoffFrame, landingFrame: finalLandingFrame,
-    takeoffTime, landingTime,
+    takeoffTime, landingTime, staturePxAtJump,
   }
 
   return finalDuration > MAX_FLIGHT_SECONDS ? { kind: 'too-long', phase } : { kind: 'found', phase }
